@@ -1,64 +1,105 @@
-import { float, Fn, fract, mx_noise_float, length, positionLocal, time, uniform, vec3, vec4, instancedBufferAttribute, color, instancedArray } from 'three/tsl';
+import { float, Fn, uniform, vec4, color, instancedArray } from 'three/tsl';
 import './style.css'
 import * as THREE from 'three/webgpu';
-import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
+let camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 100);
+let scene = new THREE.Scene();
+let renderer = new THREE.WebGPURenderer({
+  antialias: true,
+});
+
+let controls = new OrbitControls(camera, renderer.domElement);
 
 async function main() {
+  camera.position.set(3, 5, 8);
+  // camera.near = 0.05;
+  camera.far = 200
 
-  const positionsArray = await fetch("/out.bin")
-    .then(response => response.arrayBuffer())
-    .then(data => {
-      return new Float32Array(data)
-    })
-  const positionsCount = positionsArray.length / 3
-  console.log({ len: positionsArray.length, positionsCount })
-  const scene = new THREE.Scene();
+  // ambient light
 
-  const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 10)
-  camera.position.z = 1.5
-  camera.far = 3000
-  camera.near = 0.01
+  const ambientLight = new THREE.AmbientLight('#ffffff', 0.5);
+  scene.add(ambientLight);
 
-  const renderer = new THREE.WebGPURenderer()
-  renderer.setSize(window.innerWidth, window.innerHeight)
-  document.body.appendChild(renderer.domElement)
-  renderer.setAnimationLoop(animate)
+  // renderer
 
-  const controls = new OrbitControls(camera, renderer.domElement)
 
-  window.addEventListener('resize', function () {
-    camera.aspect = window.innerWidth / window.innerHeight
-    camera.updateProjectionMatrix()
-    renderer.setSize(window.innerWidth, window.innerHeight)
-  })
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor('#000000');
+  document.body.appendChild(renderer.domElement);
 
-  const options = {
-    zoom: 5,
+  await renderer.init();
+
+  controls.enableDamping = true;
+  controls.minDistance = 0.1;
+  controls.maxDistance = 150;
+  controls.update()
+
+  controls.addEventListener('change', requestRenderIfNotRequested)
+
+  window.addEventListener('resize', onWindowResize);
+
+  await loadStars()
+
+  render()
+}
+
+function onWindowResize() {
+
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  requestRenderIfNotRequested()
+}
+
+function requestRenderIfNotRequested() {
+  if (!renderRequested) {
+    renderRequested = true
+    requestAnimationFrame(render)
   }
+}
 
-  const uZoom = uniform(options.zoom)
+let renderRequested = false
+function render() {
+  renderRequested = false
 
-  const material = new THREE.SpriteNodeMaterial({
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  })
+  controls.update()
+  renderer.render(scene, camera)
+}
 
-  const positionsBuffer = instancedArray(positionsArray, 'vec3')
+async function loadStars() {
+  const starPositionArrays = await Promise.all([0, 1, 2, 3]
+    .map(i => fetch(`/neutron_coords_${i}.bin`)
+      .then(res => res.arrayBuffer())
+      .then(arr => new Float32Array(arr)))
+  )
 
-  material.positionNode = positionsBuffer.toAttribute()
+  const count = starPositionArrays.reduce((acc, arr) => acc + arr.length / 3, 0)
+  console.log(`Loaded star data with ${count} stars`)
 
-  const geometry = new THREE.PlaneGeometry(0.05, 0.05)
-  const mesh = new THREE.InstancedMesh(geometry, material, positionsCount)
-  scene.add(mesh)
+  for (const arr of starPositionArrays) {
+    const positionBuffer = instancedArray(arr, 'vec3');
 
-  const gui = new GUI()
-  gui.add(options, 'zoom', 1, 100).onChange((value) => {
-    uZoom.value = value
-  })
+    // nodes
+    const material = new THREE.SpriteNodeMaterial({ blending: THREE.AdditiveBlending, depthWrite: false });
+    const colorA = uniform(color('#5900ff'));
 
-  function animate() {
-    renderer.render(scene, camera)
+    material.positionNode = positionBuffer.toAttribute().div(float(1000));
+
+    material.colorNode = Fn(() => {
+      return vec4(colorA, 1);
+
+    })();
+
+    material.scaleNode = float(0.05);
+
+    // mesh
+
+    const geometry = new THREE.PlaneGeometry(0.5, 0.5);
+    const mesh = new THREE.InstancedMesh(geometry, material, arr.length / 3);
+    mesh.frustumCulled = false
+    scene.add(mesh);
   }
 }
 

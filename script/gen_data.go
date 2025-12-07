@@ -30,11 +30,21 @@ func main() {
 	scanner := bufio.NewScanner(f)
 	scanner.Scan()
 
-	outfile, err := os.Create("out.bin")
-	if err != nil {
-		panic(err)
+	outfiles := make([]*os.File, 0)
+	for i := range 4 {
+		filename := fmt.Sprintf("public/neutron_coords_%d.bin", i)
+		outfile, err := os.Create(filename)
+		outfiles = append(outfiles, outfile)
+		if err != nil {
+			panic(err)
+		}
 	}
-	defer outfile.Close()
+
+	defer func() {
+		for _, outfile := range outfiles {
+			outfile.Close()
+		}
+	}()
 
 	data := []float32{0, 0, 0}
 	for scanner.Scan() {
@@ -55,7 +65,16 @@ func main() {
 		data[0] = sys.Coords.X
 		data[1] = sys.Coords.Y
 		data[2] = sys.Coords.Z
-		err = binary.Write(outfile, binary.LittleEndian, data)
+
+		i := 0
+		if sys.Coords.X > 0 {
+			i += 2
+		}
+		if sys.Coords.Y > 0 {
+			i += 1
+		}
+
+		err = binary.Write(outfiles[i], binary.LittleEndian, data)
 		if err != nil {
 			panic(err)
 		}
