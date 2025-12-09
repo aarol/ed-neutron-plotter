@@ -23,7 +23,7 @@ async function getStarCoords(star: string): Promise<Vector3> {
   const data: SystemInfoResponse = await response.json();
 
   return new Vector3(
-    data.coords.x,
+    -data.coords.x, // All x-coordinates are negative to what you see in game
     data.coords.y,
     data.coords.z
   ).divideScalar(1000)

@@ -12,7 +12,8 @@ export class Galaxy {
   })
 
   controls = new OrbitControls(this.camera, this.renderer.domElement)
-
+  targetPosition = new Vector3(0, 0, 0)
+  currentPosition = this.targetPosition.clone()
 
   async init() {
     this.camera.position.set(34.65699659876029, 21.90527423256544, -24.079356892645272);
@@ -28,8 +29,8 @@ export class Galaxy {
     this.controls.minDistance = 0.1;
     this.controls.maxDistance = 150;
     this.controls.update()
-    const localThis = this
 
+    const localThis = this
     this.controls.addEventListener('change', this.requestRenderIfNotRequested.bind(localThis))
 
     window.addEventListener('resize', this.onWindowResize.bind(localThis));
@@ -54,8 +55,8 @@ export class Galaxy {
   }
 
   setTarget(target: Vector3) {
-    this.controls.target = target
-    this.controls.update()
+    this.targetPosition = target
+    this.requestRenderIfNotRequested()
   }
 
   onWindowResize() {
@@ -72,11 +73,18 @@ export class Galaxy {
 
     this.controls.update()
     this.renderer.render(this.scene, this.camera)
+
+    if (this.currentPosition.distanceToSquared(this.targetPosition) > 0.01) {
+      this.currentPosition.lerp(this.targetPosition, 0.08)
+      this.controls.target.copy(this.currentPosition)
+      this.requestRenderIfNotRequested()
+    }
   }
 
   requestRenderIfNotRequested() {
     if (!this.renderRequested) {
       this.renderRequested = true
+
       requestAnimationFrame(this.render.bind(this));
     }
   }
