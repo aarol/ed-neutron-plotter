@@ -1,6 +1,6 @@
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { color, float, Fn, instancedArray, uniform, vec4 } from 'three/tsl';
-import { AdditiveBlending, AmbientLight, CubeTextureLoader, InstancedMesh, PerspectiveCamera, PlaneGeometry, Scene, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
+import { AdditiveBlending, CubeTextureLoader, InstancedMesh, PerspectiveCamera, PlaneGeometry, Scene, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
 
 
 export class Galaxy {
@@ -8,6 +8,7 @@ export class Galaxy {
   scene = new Scene();
   renderer = new WebGPURenderer({
     antialias: true,
+    depth: false,
   })
 
   controls = new OrbitControls(this.camera, this.renderer.domElement)
