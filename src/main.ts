@@ -7,6 +7,7 @@ import * as wasm from "../rust-module/pkg";
 async function main() {
   const galaxy = new Galaxy();
   await galaxy.init();
+  let trie_bin: undefined | ArrayBuffer = undefined;
 
   const searchBox = new SearchBox({
     placeholder: "Search stars..",
@@ -14,9 +15,20 @@ async function main() {
       const target = await api.getStarCoords(query);
       galaxy.setTarget(target);
     },
+    onSuggest: (word: string) => {
+      if (trie_bin) {
+        return wasm.suggest_words(new Uint8Array(trie_bin), word) as string[];
+      }
+      return [];
+    }
   });
 
   searchBox.mount(document.body);
+
+  fetch("/trie.bin").then(res => res.arrayBuffer())
+    .then(buffer => {
+      trie_bin = buffer;
+    })
 }
 
 main();

@@ -1,5 +1,6 @@
 export interface SearchBoxOptions {
   onSearch?: (query: string) => void;
+  onSuggest: (word: string) => string[];
   placeholder?: string;
   className?: string;
 }
@@ -9,7 +10,7 @@ export class SearchBox {
   private input: HTMLInputElement;
   private onSearchCallback?: (query: string) => void;
 
-  constructor(options: SearchBoxOptions = {}) {
+  constructor(options: SearchBoxOptions) {
     this.onSearchCallback = options.onSearch;
     // Create container
     this.container = document.createElement('div');
@@ -70,6 +71,11 @@ export class SearchBox {
         if (this.onSearchCallback) {
           this.onSearchCallback(query);
         }
+      }
+      if (this.input.value.length >= 2) {
+        const query = this.input.value;
+        const suggestions = options.onSuggest(query);
+        console.log('Suggestions:', suggestions);
       }
     });
 
