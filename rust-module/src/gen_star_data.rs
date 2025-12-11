@@ -1,8 +1,7 @@
 mod trie;
 
-use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 
-use byteorder::WriteBytesExt;
 use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct System {
@@ -23,7 +22,7 @@ pub struct Coords {
 use trie::CompactPatriciaTrie;
 
 fn main() -> io::Result<()> {
-    let mut file = std::fs::File::open("src/systems_neutron.json")?;
+    let mut file = std::fs::File::open("systems_neutron.json")?;
     file.seek(SeekFrom::Start(1))?;
     let reader = BufReader::new(file);
 
@@ -66,8 +65,12 @@ fn main() -> io::Result<()> {
             trie.insert(system.name.as_str());
         });
 
+    let out_dir = std::path::Path::new("../public/data");
+    std::fs::create_dir_all(out_dir)?;
+
     [0, 1, 2, 3].iter().for_each(|i| {
-        let mut file = std::fs::File::create(format!("out/neutron_stars{}.bin", i)).unwrap();
+        let mut file =
+            std::fs::File::create(out_dir.join(format!("neutron_stars{}.bin", i))).unwrap();
         let bytes = unsafe {
             std::slice::from_raw_parts(
                 star_vecs[*i].as_ptr() as *const u8,
@@ -77,7 +80,7 @@ fn main() -> io::Result<()> {
         file.write_all(bytes).unwrap();
     });
 
-    dbg!(trie.contains("Speamoo AA-A h0"));
+    dbg!(trie.suggest("Speamoo", 10));
 
     println!("Trie has {} nodes", trie.nodes.len());
     println!(
@@ -87,29 +90,9 @@ fn main() -> io::Result<()> {
     );
 
     // Write trie to file
-    let mut trie_file = std::fs::File::create("out/trie.bin")?;
+    let mut trie_file = std::fs::File::create(out_dir.join("search_trie.bin"))?;
 
-    println!("1");
-    trie_file.write_u32::<byteorder::LittleEndian>(trie.nodes.len() as u32)?;
-    let trie_bytes = unsafe {
-        std::slice::from_raw_parts(
-            trie.nodes.as_ptr() as *const u8,
-            trie.nodes.len() * std::mem::size_of::<trie::Node>(),
-        )
-    };
-    println!("2");
-    trie_file.write_all(trie_bytes)?;
-
-    println!("3");
-    trie_file.write_u32::<byteorder::LittleEndian>(trie.labels.len() as u32)?;
-    let trie_label_bytes = unsafe {
-        std::slice::from_raw_parts(
-            trie.labels.as_ptr() as *const u8,
-            trie.labels.len() * std::mem::size_of::<u8>(),
-        )
-    };
-    println!("4");
-    trie_file.write_all(trie_label_bytes)?;
+    trie_file.write_all(&trie.to_bytes())?;
 
     Ok(())
 }

@@ -8,10 +8,15 @@ export interface SearchBoxOptions {
 export class SearchBox {
   private container: HTMLDivElement;
   private input: HTMLInputElement;
+  private suggestionsContainer: HTMLDivElement;
   private onSearchCallback?: (query: string) => void;
+  private onSuggestCallback: (word: string) => string[];
+  private selectedIndex: number = -1;
+  private suggestions: string[] = [];
 
   constructor(options: SearchBoxOptions) {
     this.onSearchCallback = options.onSearch;
+    this.onSuggestCallback = options.onSuggest;
     // Create container
     this.container = document.createElement('div');
     this.container.className = options.className || 'search-box-container';
@@ -57,29 +62,140 @@ export class SearchBox {
       this.input.style.boxShadow = '0 4px 15px rgba(0, 0, 0, 0.2)';
     });
 
-    // // Add search functionality
-    // this.input.addEventListener('input', (e) => {
-    //   const query = (e.target as HTMLInputElement).value;
-    //   if (this.onSearchCallback) {
-    //     this.onSearchCallback(query);
-    //   }
-    // });
+    // Create suggestions container
+    this.suggestionsContainer = document.createElement('div');
+    this.suggestionsContainer.className = 'search-suggestions';
+    this.suggestionsContainer.style.cssText = `
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: rgba(0, 0, 0, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 15px 15px;
+      max-height: 200px;
+      overflow-y: auto;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display: none;
+      z-index: 1001;
+    `;
+
+    // Add input functionality
+    this.input.addEventListener('input', (e) => {
+      const query = (e.target as HTMLInputElement).value;
+      if (query.length >= 2) {
+        const suggestions = this.onSuggestCallback(query);
+        this.showSuggestions(suggestions);
+      } else {
+        this.hideSuggestions();
+      }
+    });
 
     this.input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const query = this.input.value;
-        if (this.onSearchCallback) {
-          this.onSearchCallback(query);
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (this.suggestions.length > 0) {
+          this.selectedIndex = Math.min(this.selectedIndex + 1, this.suggestions.length - 1);
+          this.updateSelection();
         }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (this.suggestions.length > 0) {
+          this.selectedIndex = Math.max(this.selectedIndex - 1, -1);
+          this.updateSelection();
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (this.selectedIndex >= 0 && this.selectedIndex < this.suggestions.length) {
+          const selectedSuggestion = this.suggestions[this.selectedIndex];
+          this.input.value = selectedSuggestion;
+          this.hideSuggestions();
+          if (this.onSearchCallback) {
+            this.onSearchCallback(selectedSuggestion);
+          }
+        } else {
+          const query = this.input.value;
+          if (this.onSearchCallback) {
+            this.onSearchCallback(query);
+          }
+          this.hideSuggestions();
+        }
+      } else if (e.key === 'Escape') {
+        this.hideSuggestions();
       }
-      if (this.input.value.length >= 2) {
-        const query = this.input.value;
-        const suggestions = options.onSuggest(query);
-        console.log('Suggestions:', suggestions);
+    });
+
+    // Hide suggestions when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!this.container.contains(e.target as Node)) {
+        this.hideSuggestions();
       }
     });
 
     this.container.appendChild(this.input);
+    this.container.appendChild(this.suggestionsContainer);
+  }
+
+  private showSuggestions(suggestions: string[]): void {
+    this.suggestions = suggestions;
+    this.selectedIndex = -1;
+    this.suggestionsContainer.innerHTML = '';
+
+    if (suggestions.length === 0) {
+      this.hideSuggestions();
+      return;
+    }
+
+    suggestions.forEach((suggestion, index) => {
+      const item = document.createElement('div');
+      item.className = 'suggestion-item';
+      item.textContent = suggestion;
+      item.dataset.index = index.toString();
+      item.style.cssText = `
+        padding: 10px 20px;
+        color: white;
+        cursor: pointer;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        transition: background-color 0.2s ease;
+      `;
+
+      item.addEventListener('mouseenter', () => {
+        this.selectedIndex = index;
+        this.updateSelection();
+      });
+
+      item.addEventListener('click', () => {
+        this.input.value = suggestion;
+        this.hideSuggestions();
+        if (this.onSearchCallback) {
+          this.onSearchCallback(suggestion);
+        }
+      });
+
+      this.suggestionsContainer.appendChild(item);
+    });
+
+    this.suggestionsContainer.style.display = 'block';
+  }
+
+  private updateSelection(): void {
+    const items = this.suggestionsContainer.querySelectorAll('.suggestion-item');
+    items.forEach((item, index) => {
+      const element = item as HTMLElement;
+      if (index === this.selectedIndex) {
+        element.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+        element.scrollIntoView({ block: 'nearest' });
+      } else {
+        element.style.backgroundColor = 'transparent';
+      }
+    });
+  }
+
+  private hideSuggestions(): void {
+    this.suggestionsContainer.style.display = 'none';
+    this.selectedIndex = -1;
+    this.suggestions = [];
   }
 
   public mount(parent: HTMLElement = document.body): void {

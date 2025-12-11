@@ -20,12 +20,10 @@ pub fn greet() {
 }
 
 #[wasm_bindgen]
-pub fn suggest_words(trie: &[u8], prefix: &str) -> Vec<JsValue> {
+pub fn suggest_words(trie: &[u8], prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
     let trie = CompactPatriciaTrie::from_bytes(trie);
 
-    log_u32(trie.nodes.len() as u32);
-
-    trie.suggest(prefix)
+    trie.suggest(prefix, num_suggestions)
         .into_iter()
         .map(|s| JsValue::from_str(s.as_str()))
         .collect()
@@ -34,8 +32,6 @@ pub fn suggest_words(trie: &[u8], prefix: &str) -> Vec<JsValue> {
 #[wasm_bindgen]
 pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
     let trie = CompactPatriciaTrie::from_bytes(trie);
-
-    log_u32(trie.nodes.len() as u32);
 
     JsValue::from_bool(trie.contains(prefix))
 }

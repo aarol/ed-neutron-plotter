@@ -30,6 +30,7 @@ export class Galaxy {
     this.controls.maxDistance = 150;
     this.controls.update()
 
+    // this is for you javascript (middle finger)
     const localThis = this
     this.controls.addEventListener('change', this.requestRenderIfNotRequested.bind(localThis))
 
@@ -46,10 +47,6 @@ export class Galaxy {
     ])
 
     this.scene.background = texture;
-
-    // ambient light
-    // const ambientLight = new AmbientLight('#ffffff', 0.5);
-    // this.scene.add(ambientLight);
 
     this.loadStars()
   }
@@ -92,7 +89,7 @@ export class Galaxy {
   async loadStars() {
     console.log('Loading star data...')
     const starPositionArrays = await Promise.all([0, 1, 2, 3]
-      .map(i => fetch(`/neutron_coords_${i}.bin`)
+      .map(i => fetch(`/data/neutron_stars${i}.bin`)
         .then(res => res.arrayBuffer())
         .then(arr => new Float32Array(arr)))
     )

@@ -17,7 +17,7 @@ async function main() {
     },
     onSuggest: (word: string) => {
       if (trie_bin) {
-        return wasm.suggest_words(new Uint8Array(trie_bin), word) as string[];
+        return wasm.suggest_words(new Uint8Array(trie_bin), word, 10) as string[];
       }
       return [];
     }
@@ -25,7 +25,7 @@ async function main() {
 
   searchBox.mount(document.body);
 
-  fetch("/trie.bin").then(res => res.arrayBuffer())
+  fetch("/data/search_trie.bin").then(res => res.arrayBuffer())
     .then(buffer => {
       trie_bin = buffer;
     })

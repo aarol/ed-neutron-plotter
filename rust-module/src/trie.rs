@@ -1,4 +1,4 @@
-use std::{io::Read, mem};
+use std::{io::Read, mem, num};
 
 use byteorder::{LittleEndian, ReadBytesExt, LE};
 
@@ -151,11 +151,13 @@ impl CompactPatriciaTrie {
     }
 
     /// Returns up to 6 suggestions extending the given prefix.
-    pub fn suggest(&self, prefix: &str) -> Vec<String> {
+    pub fn suggest(&self, prefix: &str, num_suggestions: usize) -> Vec<String> {
         let mut results = Vec::new();
         let prefix_bytes = prefix.as_bytes();
         let mut node_idx = 0;
         let mut key_cursor = 0;
+        // Buffer contains the current prefix being built with correct capitalization
+        let mut buffer = vec![];
 
         // 1. Traverse to the end of the prefix
         while key_cursor < prefix_bytes.len() {
@@ -171,15 +173,22 @@ impl CompactPatriciaTrie {
 
                 if common_len > 0 {
                     // Match found (partial or complete)
-
+                    // Append the matched, correctly capitalized part to the buffer
+                    buffer.extend_from_slice(&child_label[..common_len]);
                     // If the match is partial (e.g. prefix="ba", child="banana"),
                     // we have found our target node. We are inside this node.
                     if common_len == current_key_part.len() {
                         // We consumed the whole prefix.
                         // We are now "inside" this child node at offset `common_len`.
                         // We start collecting from here.
-                        let mut buffer = String::from(prefix);
-                        self.collect_suggestions(child_idx, common_len, &mut buffer, &mut results);
+                        let mut buffer = String::from_utf8(buffer).unwrap();
+                        self.collect_suggestions(
+                            child_idx,
+                            common_len,
+                            &mut buffer,
+                            &mut results,
+                            num_suggestions,
+                        );
                         return results;
                     }
 
@@ -230,8 +239,8 @@ impl CompactPatriciaTrie {
         // Start DFS on children
         let mut child = self.nodes[node_idx as usize].first_child;
         while child != NONE {
-            self.collect_suggestions(child, 0, &mut buffer, &mut results);
-            if results.len() >= 6 {
+            self.collect_suggestions(child, 0, &mut buffer, &mut results, num_suggestions);
+            if results.len() >= num_suggestions {
                 return results;
             }
             child = self.nodes[child as usize].next_sibling;
@@ -311,8 +320,9 @@ impl CompactPatriciaTrie {
         offset: usize,
         buffer: &mut String,
         results: &mut Vec<String>,
+        num_suggestions: usize,
     ) {
-        if results.len() >= 6 {
+        if results.len() >= num_suggestions {
             return;
         }
 
@@ -342,8 +352,8 @@ impl CompactPatriciaTrie {
         // 2. DFS into children
         let mut child = node.first_child;
         while child != NONE {
-            self.collect_suggestions(child, 0, buffer, results);
-            if results.len() >= 6 {
+            self.collect_suggestions(child, 0, buffer, results, num_suggestions);
+            if results.len() >= num_suggestions {
                 buffer.truncate(buffer.len() - added_len);
                 return;
             }
@@ -360,7 +370,10 @@ impl CompactPatriciaTrie {
     }
     /// Helper to find the length of the common prefix between two byte slices.
     fn common_prefix(a: &[u8], b: &[u8]) -> usize {
-        a.iter().zip(b).take_while(|(x, y)| x == y).count()
+        a.iter()
+            .zip(b)
+            .take_while(|(x, y)| x.to_ascii_lowercase() == y.to_ascii_lowercase())
+            .count()
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -381,6 +394,9 @@ impl CompactPatriciaTrie {
         let label_count = self.labels.len() as u32;
         bytes.extend_from_slice(&label_count.to_le_bytes());
         bytes.extend_from_slice(&self.labels);
+
+        dbg!(self.nodes.len());
+        dbg!(self.labels.len());
 
         bytes
     }
@@ -416,10 +432,6 @@ impl CompactPatriciaTrie {
         Self { nodes, labels }
     }
 }
-
-// --- WASM Serialization Helper ---
-// Since the structure is just two Vecs, serialization is trivial.
-// You can just dump the memory of `nodes` and `labels`.
 
 #[cfg(test)]
 mod tests {
