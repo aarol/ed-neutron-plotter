@@ -1,28 +1,92 @@
-use std::{io::Read, mem, num};
+use std::{io::Read, mem};
 
-use byteorder::{LittleEndian, ReadBytesExt, LE};
+use byteorder::{LittleEndian, ReadBytesExt};
 
 /// A sentinel value representing "null" or "no node".
-const NONE: u32 = u32::MAX;
+/// Must fit in 24 bits for the packed next_sibling field.
+const NONE: u32 = 0x00FFFFFF; // 16,777,215 - maximum value for 24 bits
 
 /// A compact node representation (16 bytes total).
 ///
 /// Layout:
+/// Each node uses 12 bytes:
 /// - label_start (4 bytes)
 /// - first_child (4 bytes)
-/// - next_sibling (4 bytes)
-/// - label_len (2 bytes)
-/// - flags (1 byte: is_terminal)
-/// - padding (1 byte)
+/// - next_sibling_packed (4 bytes):
+///   - next_sibling: bits 0-23 (24 bits, max 16M nodes)
+///   - label_len: bits 24-30 (7 bits, max 127 chars)
+///   - is_terminal: bit 31 (1 bit)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)] // Ensures consistent memory layout for WASM/FFI
 pub struct Node {
     pub label_start: u32,
     pub first_child: u32,
-    pub next_sibling: u32,
-    pub label_len: u16,
-    pub is_terminal: bool,
-    // Rust will add 1 byte of padding here to align to 4 bytes (u32 alignment)
+    // Packed field: next_sibling (24 bits) | label_len (7 bits) | is_terminal (1 bit)
+    pub next_sibling_packed: u32,
+}
+
+impl Node {
+    // Helper functions for packed next_sibling field
+
+    pub fn next_sibling(&self) -> u32 {
+        self.next_sibling_packed & 0x00FFFFFF // First 24 bits
+    }
+
+    pub fn label_len(&self) -> u16 {
+        ((self.next_sibling_packed >> 24) & 0x7F) as u16 // Bits 24-30 (7 bits)
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        (self.next_sibling_packed >> 31) != 0 // Bit 31
+    }
+
+    pub fn set_next_sibling(&mut self, next_sibling: u32) {
+        // Validate that next_sibling fits in 24 bits
+        debug_assert!(
+            next_sibling <= 0x00FFFFFF,
+            "next_sibling {} exceeds 24-bit limit",
+            next_sibling
+        );
+        // Clear the next_sibling bits and set new value
+        self.next_sibling_packed =
+            (self.next_sibling_packed & 0xFF000000) | (next_sibling & 0x00FFFFFF);
+    }
+
+    pub fn set_label_len(&mut self, label_len: u16) {
+        // Validate that label_len fits in 7 bits
+        debug_assert!(
+            label_len <= 127,
+            "label_len {} exceeds 7-bit limit",
+            label_len
+        );
+        // Clear the label_len bits and set new value
+        self.next_sibling_packed =
+            (self.next_sibling_packed & 0x80FFFFFF) | ((label_len as u32 & 0x7F) << 24);
+    }
+
+    pub fn set_is_terminal(&mut self, is_terminal: bool) {
+        // Clear the is_terminal bit and set new value
+        self.next_sibling_packed =
+            (self.next_sibling_packed & 0x7FFFFFFF) | ((is_terminal as u32) << 31);
+    }
+
+    pub fn new(
+        label_start: u32,
+        first_child: u32,
+        next_sibling: u32,
+        label_len: u16,
+        is_terminal: bool,
+    ) -> Self {
+        let mut node = Node {
+            label_start,
+            first_child,
+            next_sibling_packed: 0,
+        };
+        node.set_next_sibling(next_sibling);
+        node.set_label_len(label_len);
+        node.set_is_terminal(is_terminal);
+        node
+    }
 }
 
 /// A linear-memory Patricia Trie.
@@ -43,13 +107,7 @@ impl CompactPatriciaTrie {
         };
         // Create a dummy root node.
         // The root has no label and is not terminal.
-        trie.nodes.push(Node {
-            label_start: 0,
-            label_len: 0,
-            first_child: NONE,
-            next_sibling: NONE,
-            is_terminal: false,
-        });
+        trie.nodes.push(Node::new(0, NONE, NONE, 0, false));
         trie
     }
 
@@ -93,7 +151,7 @@ impl CompactPatriciaTrie {
 
                 // No match, move to next sibling
                 prev_child_idx = child_idx;
-                child_idx = self.nodes[child_idx as usize].next_sibling;
+                child_idx = self.nodes[child_idx as usize].next_sibling();
             }
 
             // CASE 2: No matching child found.
@@ -106,7 +164,7 @@ impl CompactPatriciaTrie {
                 // It's the first child
                 self.nodes[node_idx].first_child = new_child_idx;
             } else {
-                self.nodes[prev_child_idx as usize].next_sibling = new_child_idx;
+                self.nodes[prev_child_idx as usize].set_next_sibling(new_child_idx);
             }
 
             return;
@@ -114,7 +172,7 @@ impl CompactPatriciaTrie {
 
         // If we exhausted the key exactly at this node, mark it terminal.
         if key_cursor == key_bytes.len() {
-            self.nodes[node_idx].is_terminal = true;
+            self.nodes[node_idx].set_is_terminal(true);
         }
     }
 
@@ -139,7 +197,7 @@ impl CompactPatriciaTrie {
                     matched_child = true;
                     break;
                 }
-                child_idx = self.nodes[child_idx as usize].next_sibling;
+                child_idx = self.nodes[child_idx as usize].next_sibling();
             }
 
             if !matched_child {
@@ -147,7 +205,7 @@ impl CompactPatriciaTrie {
             }
         }
 
-        self.nodes[node_idx].is_terminal
+        self.nodes[node_idx].is_terminal()
     }
 
     /// Returns up to 6 suggestions extending the given prefix.
@@ -206,7 +264,7 @@ impl CompactPatriciaTrie {
                     return results;
                 }
 
-                child_idx = self.nodes[child_idx as usize].next_sibling;
+                child_idx = self.nodes[child_idx as usize].next_sibling();
             }
 
             if !found_child {
@@ -232,7 +290,7 @@ impl CompactPatriciaTrie {
 
         // If the exact prefix itself is a valid word (and we are at root or a boundary), add it.
         // Note: The root is never terminal, so this check is safe.
-        if self.nodes[node_idx as usize].is_terminal {
+        if self.nodes[node_idx as usize].is_terminal() {
             results.push(buffer.clone());
         }
 
@@ -243,7 +301,7 @@ impl CompactPatriciaTrie {
             if results.len() >= num_suggestions {
                 return results;
             }
-            child = self.nodes[child as usize].next_sibling;
+            child = self.nodes[child as usize].next_sibling();
         }
 
         results
@@ -259,13 +317,8 @@ impl CompactPatriciaTrie {
         self.labels.extend_from_slice(label);
 
         let idx = self.nodes.len() as u32;
-        self.nodes.push(Node {
-            label_start,
-            label_len,
-            first_child: NONE,
-            next_sibling: NONE,
-            is_terminal,
-        });
+        self.nodes
+            .push(Node::new(label_start, NONE, NONE, label_len, is_terminal));
         idx
     }
 
@@ -273,7 +326,7 @@ impl CompactPatriciaTrie {
     /// Used when an existing edge "banana" needs to become "ban" -> "ana".
     fn split_node(&mut self, node_idx: u32, split_len: usize) {
         let node_label_start = self.nodes[node_idx as usize].label_start;
-        let node_label_len = self.nodes[node_idx as usize].label_len;
+        let node_label_len = self.nodes[node_idx as usize].label_len();
 
         // 1. Create a new node representing the suffix ("ana")
         // NOTE: We don't need to copy bytes to `labels`. We can point to the existing
@@ -285,28 +338,28 @@ impl CompactPatriciaTrie {
 
         // The new child inherits the children and terminal status of the original node
         let original_children = self.nodes[node_idx as usize].first_child;
-        let original_terminal = self.nodes[node_idx as usize].is_terminal;
+        let original_terminal = self.nodes[node_idx as usize].is_terminal();
 
-        self.nodes.push(Node {
-            label_start: suffix_start,
-            label_len: suffix_len,
-            first_child: original_children, // Takes custody of existing children
-            next_sibling: NONE,             // It will be the only child of the parent (for now)
-            is_terminal: original_terminal,
-        });
+        self.nodes.push(Node::new(
+            suffix_start,
+            original_children, // Takes custody of existing children
+            NONE,              // It will be the only child of the parent (for now)
+            suffix_len,
+            original_terminal,
+        ));
 
         // 2. Update the original node to represent the prefix ("ban")
         // It now points to the new child.
         let node = &mut self.nodes[node_idx as usize];
-        node.label_len = split_len as u16;
+        node.set_label_len(split_len as u16);
         node.first_child = new_child_idx;
-        node.is_terminal = false; // "ban" is likely not terminal unless explicitly marked later
+        node.set_is_terminal(false); // "ban" is likely not terminal unless explicitly marked later
     }
 
     fn get_label(&self, node_idx: u32) -> &[u8] {
         let node = &self.nodes[node_idx as usize];
         let start = node.label_start as usize;
-        let end = start + node.label_len as usize;
+        let end = start + node.label_len() as usize;
         &self.labels[start..end]
     }
     /// Recursive helper to collect suggestions.
@@ -340,7 +393,7 @@ impl CompactPatriciaTrie {
         buffer.push_str(remainder_str);
 
         // 1. Is this node itself a valid word?
-        if node.is_terminal {
+        if node.is_terminal() {
             results.push(buffer.clone());
             if results.len() >= 6 {
                 // Backtrack before returning
@@ -357,7 +410,7 @@ impl CompactPatriciaTrie {
                 buffer.truncate(buffer.len() - added_len);
                 return;
             }
-            child = self.nodes[child as usize].next_sibling;
+            child = self.nodes[child as usize].next_sibling();
         }
 
         // Backtrack
@@ -472,5 +525,39 @@ mod tests {
         let root_child = trie.nodes[0].first_child;
         let lbl = trie.get_label(root_child);
         assert_eq!(lbl, b"te");
+    }
+
+    #[test]
+    fn test_node_memory_layout() {
+        // Verify that Node is 12 bytes (3 u32s) instead of the original 16 bytes
+        assert_eq!(std::mem::size_of::<Node>(), 12);
+
+        // Test packed field functionality
+        let mut node = Node::new(100, 200, 300, 50, true);
+
+        // Test getter methods
+        assert_eq!(node.label_start, 100);
+        assert_eq!(node.first_child, 200);
+        assert_eq!(node.next_sibling(), 300);
+        assert_eq!(node.label_len(), 50);
+        assert_eq!(node.is_terminal(), true);
+
+        // Test setter methods
+        node.set_next_sibling(400);
+        node.set_label_len(75);
+        node.set_is_terminal(false);
+
+        assert_eq!(node.next_sibling(), 400);
+        assert_eq!(node.label_len(), 75);
+        assert_eq!(node.is_terminal(), false);
+
+        // Test edge cases
+        node.set_next_sibling(0x00FFFFFF); // Max 24-bit value
+        node.set_label_len(127); // Max 7-bit value
+        node.set_is_terminal(true);
+
+        assert_eq!(node.next_sibling(), 0x00FFFFFF);
+        assert_eq!(node.label_len(), 127);
+        assert_eq!(node.is_terminal(), true);
     }
 }
