@@ -421,12 +421,39 @@ impl CompactPatriciaTrie {
     pub fn size_in_bytes(&self) -> usize {
         (self.nodes.len() * mem::size_of::<Node>()) + (self.labels.len())
     }
+
     /// Helper to find the length of the common prefix between two byte slices.
     fn common_prefix(a: &[u8], b: &[u8]) -> usize {
         a.iter()
             .zip(b)
             .take_while(|(x, y)| x.to_ascii_lowercase() == y.to_ascii_lowercase())
             .count()
+    }
+
+    pub fn deduplicate_labels(&mut self) {
+        use std::collections::HashMap;
+
+        let mut label_map: HashMap<&[u8], u32> = HashMap::new();
+        let mut new_labels: Vec<u8> = Vec::new();
+
+        for (_, node) in self.nodes.iter_mut().enumerate() {
+            let label_start = node.label_start as usize;
+            let label_len = node.label_len() as usize;
+            let label_slice = &self.labels[label_start..label_start + label_len];
+
+            if let Some(&existing_offset) = label_map.get(label_slice) {
+                // Label already exists, update node to point to existing label
+                node.label_start = existing_offset;
+            } else {
+                // New label, add to new_labels and update mapping
+                let new_offset = new_labels.len() as u32;
+                new_labels.extend_from_slice(label_slice);
+                label_map.insert(label_slice, new_offset);
+                node.label_start = new_offset;
+            }
+        }
+
+        self.labels = new_labels;
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {

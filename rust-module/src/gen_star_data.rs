@@ -105,10 +105,18 @@ fn main() -> io::Result<()> {
     dbg!(trie.suggest("Speamoo", 10));
 
     println!("Trie has {} nodes", trie.nodes.len());
+    println!("Uses {} MB of space", trie.size_in_bytes() / 1024 / 1024);
+
+    let label_bytes_before = trie.labels.len();
+
+    // trie.deduplicate_labels();
+
     println!(
-        "Uses {} MB of space",
+        "After deduplication, uses {} MB of space (labels reduced from {} to {} bytes)",
         trie.nodes.len() * std::mem::size_of::<trie::Node>() / 1024 / 1024
-            + trie.labels.len() / 1024 / 1024
+            + trie.labels.len() / 1024 / 1024,
+        label_bytes_before,
+        trie.labels.len()
     );
 
     // Write trie to file
