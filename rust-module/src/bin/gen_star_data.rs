@@ -36,14 +36,14 @@ fn analyze() -> io::Result<()> {
 
 fn main() -> io::Result<()> {
     // Uncomment to analyze existing trie:
-    return analyze();
+    // return analyze();
 
     let out_dir = std::path::Path::new("../public/data");
     std::fs::create_dir_all(out_dir)?;
 
     let neutrons = std::fs::File::open("systems_neutron.json")?;
 
-    let systems = std::fs::File::open("systems_2weeks.json")?;
+    let systems = std::fs::File::open("systems_1day.json")?;
 
     let mut stars = vec![];
     let mut trie = TrieBuilder::new();
@@ -62,7 +62,7 @@ fn main() -> io::Result<()> {
         // The coordinates are in light years, three.js doesn't like such huge distances
         // This will reduce the scale to max [-100, 100] in each axis
         stars.push(Star::new(
-            (coords.x / 1000.0) as f32,
+            -(coords.x / 1000.0) as f32,
             (coords.y / 1000.0) as f32,
             (coords.z / 1000.0) as f32,
         ));
@@ -76,13 +76,12 @@ fn main() -> io::Result<()> {
         }
         count += 1;
 
-        // The coordinates are in light years, three.js doesn't like such huge distances
-        // This will reduce the scale to max [-100, 100] in each axis
-        stars.push(Star::new(
-            (coords.x / 1000.0) as f32,
-            (coords.y / 1000.0) as f32,
-            (coords.z / 1000.0) as f32,
-        ));
+        // Don't show these yet
+        // stars.push(Star::new(
+        //     (coords.x / 1000.0) as f32,
+        //     (coords.y / 1000.0) as f32,
+        //     (coords.z / 1000.0) as f32,
+        // ));
 
         trie.insert(name);
     })?;

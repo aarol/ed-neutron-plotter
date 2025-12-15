@@ -420,7 +420,9 @@ impl<'a> CompactRadixTrie<'a> {
                 let child_label = self.get_label(child_idx);
                 let current_key_part = &key_bytes[key_cursor..];
 
-                if current_key_part.starts_with(child_label) {
+                // Case-insensitive comparison
+                if current_key_part.len() >= child_label.len()
+                    && current_key_part[..child_label.len()].eq_ignore_ascii_case(child_label) {
                     key_cursor += child_label.len();
                     node_idx = child_idx as usize;
                     matched_child = true;
@@ -443,83 +445,86 @@ impl<'a> CompactRadixTrie<'a> {
     }
 
     pub fn suggest(&self, prefix: &str, num_suggestions: usize) -> Vec<String> {
-        let mut results = Vec::new();
-        let prefix_bytes = prefix.as_bytes();
-        let mut node_idx = 0;
-        let mut key_cursor = 0;
-        let mut buffer = vec![];
+        let mut all_results = Vec::new();
+        self.suggest_helper(prefix.as_bytes(), 0, 0, String::new(), &mut all_results);
 
-        while key_cursor < prefix_bytes.len() {
-            let mut child_idx = self.nodes[node_idx].first_child();
-            if child_idx == COMPACT_NONE {
-                return results;
+        // Sort by length, then alphabetically for stability
+        all_results.sort_by(|a, b| {
+            a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+        });
+        all_results.truncate(num_suggestions);
+
+        all_results
+    }
+
+    fn suggest_helper(
+        &self,
+        prefix_bytes: &[u8],
+        node_idx: usize,
+        prefix_pos: usize,
+        current_path: String,
+        all_results: &mut Vec<String>,
+    ) {
+        if prefix_pos >= prefix_bytes.len() {
+            // We've matched the full prefix, collect all completions from this node
+            let mut buffer = current_path;
+            if self.nodes[node_idx].is_terminal() {
+                all_results.push(buffer.clone());
             }
 
-            let mut found_child = false;
-
-            loop {
-                let child_label = self.get_label(child_idx);
-                let current_key_part = &prefix_bytes[key_cursor..];
-                let common_len = common_prefix_len(child_label, current_key_part);
-
-                if common_len > 0 {
-                    buffer.extend_from_slice(&child_label[..common_len]);
-
-                    if common_len == current_key_part.len() {
-                        let mut buffer = String::from_utf8(buffer).unwrap();
-                        self.collect_suggestions(
-                            child_idx,
-                            common_len,
-                            &mut buffer,
-                            &mut results,
-                            num_suggestions,
-                        );
-                        return results;
-                    }
-
-                    if common_len == child_label.len() {
-                        key_cursor += common_len;
-                        node_idx = child_idx as usize;
-                        found_child = true;
+            let mut child = self.nodes[node_idx].first_child();
+            if child != COMPACT_NONE {
+                loop {
+                    self.collect_suggestions(child, 0, &mut buffer, all_results, usize::MAX);
+                    if self.nodes[child as usize].has_next_sibling() {
+                        child += 1;
+                    } else {
                         break;
                     }
-
-                    return results;
                 }
+            }
+            return;
+        }
 
-                if self.nodes[child_idx as usize].has_next_sibling() {
-                    child_idx += 1;
-                } else {
-                    break;
+        // Try to match remaining prefix with children (case-insensitive)
+        let mut child_idx = self.nodes[node_idx].first_child();
+        if child_idx == COMPACT_NONE {
+            return;
+        }
+
+        loop {
+            let child_label = self.get_label(child_idx);
+            let remaining_prefix = &prefix_bytes[prefix_pos..];
+            let common_len = common_prefix_len_case_insensitive(child_label, remaining_prefix);
+
+            if common_len > 0 {
+                let label_str = unsafe { std::str::from_utf8_unchecked(&child_label[..common_len]) };
+                let mut new_path = current_path.clone();
+                new_path.push_str(label_str);
+
+                if common_len == child_label.len() {
+                    // Matched full label, continue deeper
+                    self.suggest_helper(
+                        prefix_bytes,
+                        child_idx as usize,
+                        prefix_pos + common_len,
+                        new_path,
+                        all_results,
+                    );
+                } else if common_len == remaining_prefix.len() {
+                    // Matched full remaining prefix but only partial label
+                    // Need to collect from this node starting at offset
+                    let mut buffer = new_path;
+                    self.collect_suggestions(child_idx, common_len, &mut buffer, all_results, usize::MAX);
                 }
             }
 
-            if !found_child {
-                return results;
+            if self.nodes[child_idx as usize].has_next_sibling() {
+                child_idx += 1;
+            } else {
+                break;
             }
         }
-
-        let mut buffer = String::from(prefix);
-        if self.nodes[node_idx as usize].is_terminal() {
-            results.push(buffer.clone());
-        }
-
-        let mut child = self.nodes[node_idx as usize].first_child();
-        if child != COMPACT_NONE {
-            loop {
-                self.collect_suggestions(child, 0, &mut buffer, &mut results, num_suggestions);
-                if results.len() >= num_suggestions {
-                    return results;
-                }
-                if self.nodes[child as usize].has_next_sibling() {
-                    child += 1;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        results
     }
 
     pub fn collect_suggestions(
@@ -1082,6 +1087,14 @@ fn common_prefix_len(s1: &[u8], s2: &[u8]) -> usize {
     s1.iter().zip(s2).take_while(|(a, b)| a == b).count()
 }
 
+// Helper to find length of common prefix (case-insensitive)
+fn common_prefix_len_case_insensitive(s1: &[u8], s2: &[u8]) -> usize {
+    s1.iter()
+        .zip(s2)
+        .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1298,13 +1311,19 @@ mod tests {
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0], "banana");
 
-        // Test 12: Case sensitivity
+        // Test 12: Case insensitivity
         let suggestions = trie.suggest("APP", 10);
         assert_eq!(
             suggestions.len(),
             0,
             "Should be case sensitive - no matches for uppercase. Got: {:?}", suggestions
         );
+        // Verify we got the expected words (in their original case from the trie)
+        assert!(suggestions.contains(&"app".to_string()));
+        assert!(suggestions.contains(&"apple".to_string()));
+        assert!(suggestions.contains(&"application".to_string()));
+        assert!(suggestions.contains(&"apply".to_string()));
+        assert!(suggestions.contains(&"appreciate".to_string()));
     }
 
     #[test]
