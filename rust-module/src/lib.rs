@@ -1,3 +1,4 @@
+pub mod fast_json_parser;
 pub mod star;
 pub mod trie;
 pub mod utils;

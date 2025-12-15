@@ -1,15 +1,13 @@
-use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Write};
 
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rust_module::{
-    star::{Star, System},
-    trie::CompactNode,
-};
-
-use rust_module::{
-    star::{Partition, reorder_for_partitions},
+    fast_json_parser::SystemParser,
+    star::Star,
     trie::{CompactRadixTrie, TrieBuilder},
 };
+
+use rust_module::star::{Partition, reorder_for_partitions};
 
 fn analyze() -> io::Result<()> {
     let mut file = std::io::BufReader::new(std::fs::File::open("../public/data/search_trie.bin")?);
@@ -19,55 +17,75 @@ fn analyze() -> io::Result<()> {
     let trie = CompactRadixTrie::from_bytes(&buf);
     println!("Trie has {} nodes", trie.nodes.len());
 
-    // dbg!(trie.suggest("Speamo", 10));
+    // Test contains
+    println!("\nContains 'Colonia': {}", trie.contains("Colonia"));
+
+    // Test suggest with different prefixes
+    println!("\nSuggestions for 'Col':");
+    for suggestion in trie.suggest("Col", 10) {
+        println!("  - {}", suggestion);
+    }
+
+    println!("\nSuggestions for 'Colonia':");
+    for suggestion in trie.suggest("Colonia", 10) {
+        println!("  - {}", suggestion);
+    }
 
     Ok(())
 }
 
 fn main() -> io::Result<()> {
-    // analyze()?;
-    // return Ok(());
-    let mut file = std::fs::File::open("systems_neutron.json")?;
-    file.seek(SeekFrom::Start(1))?;
-    let reader = BufReader::new(file);
-
-    let mut stars = vec![];
-
-    let mut trie = TrieBuilder::new();
-
-    reader
-        .lines()
-        .skip(1)
-        // .take(100)
-        .enumerate()
-        .for_each(|(i, line)| {
-            if i % 100000 == 0 {
-                println!("Processing line {}", i);
-            }
-
-            let mut line = line.unwrap();
-            if line == "]" {
-                return;
-            }
-            if line.ends_with(',') {
-                line.pop();
-            }
-            let line = line.as_mut_str();
-            let system = unsafe { simd_json::from_str::<System>(line).unwrap() };
-
-            // The coordinates are in light years, three.js doesn't like such huge distances
-            // This will reduce the scale to max [-100, 100] in each axis
-            stars.push(Star::new(
-                system.coords.x / 1000.0,
-                system.coords.y / 1000.0,
-                system.coords.z / 1000.0,
-            ));
-
-            trie.insert(system.name.as_str());
-        });
+    // Uncomment to analyze existing trie:
+    return analyze();
 
     let out_dir = std::path::Path::new("../public/data");
     std::fs::create_dir_all(out_dir)?;
+
+    let neutrons = std::fs::File::open("systems_neutron.json")?;
+
+    let systems = std::fs::File::open("systems_2weeks.json")?;
+
+    let mut stars = vec![];
+    let mut trie = TrieBuilder::new();
+
+    let parser = SystemParser::new(neutrons)?;
+
+    let parser2 = SystemParser::new(systems)?;
+
+    let mut count = 0;
+    parser.for_each(|name, coords| {
+        if count % 100000 == 0 {
+            println!("Processing line {}", count);
+        }
+        count += 1;
+
+        // The coordinates are in light years, three.js doesn't like such huge distances
+        // This will reduce the scale to max [-100, 100] in each axis
+        stars.push(Star::new(
+            (coords.x / 1000.0) as f32,
+            (coords.y / 1000.0) as f32,
+            (coords.z / 1000.0) as f32,
+        ));
+
+        trie.insert(name);
+    })?;
+
+    parser2.for_each(|name, coords| {
+        if count % 100000 == 0 {
+            println!("Processing line {}", count);
+        }
+        count += 1;
+
+        // The coordinates are in light years, three.js doesn't like such huge distances
+        // This will reduce the scale to max [-100, 100] in each axis
+        stars.push(Star::new(
+            (coords.x / 1000.0) as f32,
+            (coords.y / 1000.0) as f32,
+            (coords.z / 1000.0) as f32,
+        ));
+
+        trie.insert(name);
+    })?;
 
     let k_splits = 3;
     let num_partitions = 1 << k_splits;

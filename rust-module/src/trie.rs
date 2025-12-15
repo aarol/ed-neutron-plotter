@@ -4,19 +4,20 @@ use std::{
     mem,
 };
 
-/// Sentinel for CompactNode (23 bits)
-const COMPACT_NONE: u32 = 0x007FFFFF;
+/// Sentinel for CompactNode (25 bits)
+const COMPACT_NONE: u32 = 0x01FFFFFF;
 
 /// A compact node representation (8 bytes).
 /// Optimized for space and cache locality.
 ///
 /// Layout:
-/// - label_start (4 bytes)
-/// - packed (4 bytes):
-///   - first_child: 23 bits (8M nodes max)
-///   - label_len: 7 bits (127 chars max)
+/// - label_start (4 bytes):
+///   - label_start: 30 bits (1B bytes max)
 ///   - is_terminal: 1 bit
 ///   - has_next_sibling: 1 bit
+/// - packed (4 bytes):
+///   - first_child: 25 bits (33M nodes max)
+///   - label_len: 7 bits (127 chars max)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct CompactNode {
@@ -25,20 +26,55 @@ pub struct CompactNode {
 }
 
 impl CompactNode {
+    pub fn label_start(&self) -> u32 {
+        self.label_start & 0x3FFFFFFF
+    }
+
     pub fn first_child(&self) -> u32 {
-        self.packed & 0x007FFFFF
+        self.packed & 0x01FFFFFF
     }
 
     pub fn label_len(&self) -> u16 {
-        ((self.packed >> 23) & 0x7F) as u16
+        ((self.packed >> 25) & 0x7F) as u16
     }
 
     pub fn is_terminal(&self) -> bool {
-        ((self.packed >> 30) & 1) != 0
+        ((self.label_start >> 30) & 1) != 0
     }
 
     pub fn has_next_sibling(&self) -> bool {
-        ((self.packed >> 31) & 1) != 0
+        ((self.label_start >> 31) & 1) != 0
+    }
+
+    pub fn set_label_start(&mut self, value: u32) {
+        debug_assert!(value <= 0x3FFFFFFF, "label_start too large");
+        self.label_start = (self.label_start & 0xC0000000) | (value & 0x3FFFFFFF);
+    }
+
+    pub fn set_first_child(&mut self, value: u32) {
+        debug_assert!(value <= 0x01FFFFFF, "first_child too large");
+        self.packed = (self.packed & !0x01FFFFFF) | (value & 0x01FFFFFF);
+    }
+
+    pub fn set_label_len(&mut self, value: u16) {
+        debug_assert!(value <= 127, "label_len too large");
+        self.packed = (self.packed & !0xFE000000) | ((value as u32 & 0x7F) << 25);
+    }
+
+    pub fn set_is_terminal(&mut self, value: bool) {
+        if value {
+            self.label_start |= 1 << 30;
+        } else {
+            self.label_start &= !(1 << 30);
+        }
+    }
+
+    pub fn set_has_next_sibling(&mut self, value: bool) {
+        if value {
+            self.label_start |= 1 << 31;
+        } else {
+            self.label_start &= !(1 << 31);
+        }
     }
 
     pub fn new(
@@ -48,18 +84,17 @@ impl CompactNode {
         is_terminal: bool,
         has_next_sibling: bool,
     ) -> Self {
-        debug_assert!(first_child <= 0x007FFFFF, "first_child index too large");
-        debug_assert!(label_len <= 127, "label_len too large");
+        let mut node = CompactNode {
+            label_start: 0,
+            packed: 0,
+        };
+        node.set_label_start(label_start);
+        node.set_first_child(first_child);
+        node.set_label_len(label_len);
+        node.set_is_terminal(is_terminal);
+        node.set_has_next_sibling(has_next_sibling);
 
-        let packed = (first_child & 0x007FFFFF)
-            | ((label_len as u32 & 0x7F) << 23)
-            | ((is_terminal as u32) << 30)
-            | ((has_next_sibling as u32) << 31);
-
-        CompactNode {
-            label_start,
-            packed,
-        }
+        node
     }
 }
 #[derive(Debug, Default)]
@@ -361,7 +396,7 @@ impl<'a> CompactRadixTrie<'a> {
 
     fn get_label(&self, node_idx: u32) -> &[u8] {
         let node = &self.nodes[node_idx as usize];
-        let start = node.label_start as usize;
+        let start = node.label_start() as usize;
         let end = start + node.label_len() as usize;
         &self.labels[start..end]
     }
@@ -682,7 +717,7 @@ pub fn compress_labels(labels: &mut Vec<u8>, nodes: &mut Vec<CompactNode>) {
     let mut node_to_unique_id = vec![0usize; total_nodes];
 
     for (i, node) in nodes.iter().enumerate() {
-        let start = node.label_start as usize;
+        let start = node.label_start() as usize;
         let end = start + node.label_len() as usize;
         let slice = if end <= labels.len() {
             &labels[start..end]
@@ -973,7 +1008,7 @@ pub fn compress_labels(labels: &mut Vec<u8>, nodes: &mut Vec<CompactNode>) {
             continue;
         }
 
-        let mut current_write_pos = super_buffer.len() as u32;
+        let current_write_pos = super_buffer.len() as u32;
 
         // Handle first item in chain
         let first_id = chain[0].0;
@@ -1029,7 +1064,8 @@ pub fn compress_labels(labels: &mut Vec<u8>, nodes: &mut Vec<CompactNode>) {
             .get(&root_id)
             .expect("Root ID missing from offsets");
 
-        node.label_start = root_base + offset_in_root;
+        let new_label_start = root_base + offset_in_root;
+        node.set_label_start(new_label_start);
     }
 
     labels.clear();
@@ -1041,20 +1077,9 @@ pub fn compress_labels(labels: &mut Vec<u8>, nodes: &mut Vec<CompactNode>) {
     );
 }
 
-// Helper: Calculate overlap length
-
-// Helper to find length of common prefix
-// fn common_prefix_len(s1: &[u8], s2: &[u8]) -> usize {
-//     s1.iter()
-//         .zip(s2)
-//         .take_while(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
-//         .count()
-// }
+// Helper to find length of common prefix (case-sensitive to match trie structure)
 fn common_prefix_len(s1: &[u8], s2: &[u8]) -> usize {
-    s1.iter()
-        .zip(s2)
-        .take_while(|(a, b)| a == b)
-        .count()
+    s1.iter().zip(s2).take_while(|(a, b)| a == b).count()
 }
 
 #[cfg(test)]
@@ -1101,7 +1126,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<CompactNode>(), 8);
 
         let node = CompactNode::new(100, 200, 50, true, true);
-        assert_eq!(node.label_start, 100);
+        assert_eq!(node.label_start(), 100);
         assert_eq!(node.first_child(), 200);
         assert_eq!(node.label_len(), 50);
         assert_eq!(node.is_terminal(), true);
