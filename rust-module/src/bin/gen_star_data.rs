@@ -7,7 +7,7 @@ use rust_module::{
 };
 
 use rust_module::{
-    star::{reorder_for_partitions, Partition},
+    star::{Partition, reorder_for_partitions},
     trie::{CompactRadixTrie, TrieBuilder},
 };
 

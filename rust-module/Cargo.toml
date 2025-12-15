@@ -2,7 +2,7 @@
 name = "rust-module"
 version = "0.1.0"
 authors = ["aarol <aarol@iki.fi>"]
-edition = "2018"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
