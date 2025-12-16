@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     convert::TryInto,
     mem,
 };
@@ -63,6 +63,16 @@ impl NodeView {
                 first_child: w1 & MASK_CHILD_IDX,
             }
         }
+    }
+
+    fn set_label_start(nodes: &mut Vec<u32>, idx: usize, new_start: u32) {
+        let w0 = nodes[idx];
+        let label_len = w0 & MASK_LABEL_LEN;
+        let has_next = w0 & MASK_HAS_NEXT;
+        let is_leaf = w0 & MASK_IS_LEAF;
+
+        let new_w0 = (new_start & MASK_LABEL_START) | label_len | has_next | is_leaf;
+        nodes[idx] = new_w0;
     }
 }
 
@@ -612,92 +622,364 @@ impl<'a> CompactRadixTrie<'a> {
         println!("Internal Structs (8 bytes): {}", internal_structs);
         println!("Total Node Bytes: {}", (leaf_structs * 4) + (internal_structs * 8));
     }
+
 }
 
-/// Compresses label storage by solving a simplified version of the shortest superstring problem.
-/// Algorithm Overview:
-/// 1. Extract all unique label strings from nodes
-/// 2. Build a superstring by concatenating all unique strings (no overlap optimization)
-/// 3. Update node pointers to reference positions in the compressed superstring
-/// 
-/// This achieves significant space savings when many nodes share identical labels,
-/// which is common in path-compressed tries after node deduplication.
 pub fn compress_labels(labels: &mut Vec<u8>, nodes: &mut Vec<u32>) {
 
-    // We need to iterate nodes differently now (variable width)
-    // First, map logical node index (sequence) to physical index
-    let mut physical_indices = Vec::new();
-    let mut curr = 0;
-    while curr < nodes.len() {
-        physical_indices.push(curr);
-        let w0 = nodes[curr];
-        if (w0 & MASK_IS_LEAF) != 0 { curr += 1; } else { curr += 2; }
+    fn calc_overlap(a: &str, b: &str) -> usize {
+        let a_bytes = a.as_bytes();
+        let b_bytes = b.as_bytes();
+        let max_ov = std::cmp::min(a_bytes.len(), b_bytes.len());
+        
+        for k in (1..=max_ov).rev() {
+            if a_bytes[a_bytes.len()-k..] == b_bytes[..k] {
+                return k;
+            }
+        }
+        0
     }
-    
-    let total_nodes = physical_indices.len();
-    println!("Starting compression on {} logical nodes...", total_nodes);
+    enum Action {
+        None,
+        Append(usize),
+        Prepend(usize),
+    }
 
-    // PHASE 1: String Deduplication
-    // Extract all unique label strings and assign them IDs.
-    // This is the foundation of our superstring approach - we only need to store
-    // each unique string once in the final superstring.
+    let total_nodes = nodes.len();
+    println!("Starting multi-stage compression on {} nodes...", total_nodes);
+
+    // ==================================================================================
+    // STEP 1: Basic Deduplication
+    // ==================================================================================
     let mut string_to_id = HashMap::new();
     let mut unique_strings = Vec::new();
-    let mut node_to_unique_id = vec![0usize; total_nodes];
+    let mut node_to_unique_id = HashMap::new();
 
-    for (i, &phys_idx) in physical_indices.iter().enumerate() {
-        let node = NodeView::from_slice(nodes, phys_idx);
+    let mut i = 0;
+    while i < nodes.len() {
+        let node = NodeView::from_slice(nodes, i);
         let start = node.label_start as usize;
         let end = start + node.label_len as usize;
         let slice = if end <= labels.len() { &labels[start..end] } else { &[] };
         let s = String::from_utf8_lossy(slice).to_string();
 
         if let Some(&id) = string_to_id.get(&s) {
-            // String already seen - reuse existing ID
-            node_to_unique_id[i] = id;
+            node_to_unique_id.insert(i, id);
         } else {
-            // New unique string - assign new ID and store
             let id = unique_strings.len();
             string_to_id.insert(s.clone(), id);
             unique_strings.push(s);
-            node_to_unique_id[i] = id;
+            node_to_unique_id.insert(i, id);
         }
+
+        // Skip properly: 1 word for leaf, 2 words for internal
+        i += if node.is_leaf { 1 } else { 2 };
     }
 
     let num_uniques = unique_strings.len();
+    println!("    Reduced to {} unique strings. Analyzing substrings...", num_uniques);
 
-    // PHASE 2: Superstring Construction
-    // Build the compressed superstring by concatenating all unique strings.
-    let mut super_buffer = Vec::new();
-    let mut root_final_offsets = HashMap::new();
+    // ==================================================================================
+    // STEP 2: Substring Compression (Parent/Child)
+    // ==================================================================================
+    // Map short strings to substrings of longer strings
+    let mut redirects: Vec<(usize, u32)> = (0..num_uniques).map(|i| (i, 0)).collect();
+    let mut is_active = vec![true; num_uniques];
 
-    // Store the starting offset of each unique string in the superstring
-    for (id, s) in unique_strings.iter().enumerate() {
-        root_final_offsets.insert(id, super_buffer.len() as u32);
-        super_buffer.extend_from_slice(s.as_bytes());
+    let mut sorted_by_len: Vec<usize> = (0..num_uniques).collect();
+    sorted_by_len.sort_unstable_by(|&a, &b| unique_strings[a].len().cmp(&unique_strings[b].len()));
+
+    let mut length_groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &id in &sorted_by_len {
+        let len = unique_strings[id].len();
+        if len > 0 { length_groups.entry(len).or_default().push(id); }
     }
+
+    let mut distinct_lengths: Vec<_> = length_groups.keys().cloned().collect();
+    distinct_lengths.sort_unstable();
+
+    // Rabin-Karp setup
+    const P: u64 = 131;
+    let max_len = if num_uniques > 0 { unique_strings[sorted_by_len[num_uniques - 1]].len() } else { 0 };
+    let mut pow_p = vec![1u64; max_len + 1];
+    for i in 1..=max_len { pow_p[i] = pow_p[i - 1].wrapping_mul(P); }
+
+    let mut substring_hashes: HashMap<u64, (usize, u32)> = HashMap::with_capacity(50_000);
+    let mut targets_start_idx = 0;
+
+    for &len in &distinct_lengths {
+        let candidates = &length_groups[&len];
+
+        // Identify targets (strings strictly longer than current length)
+        while targets_start_idx < num_uniques {
+            let id = sorted_by_len[targets_start_idx];
+            if unique_strings[id].len() > len { break; }
+            targets_start_idx += 1;
+        }
+        if targets_start_idx >= num_uniques { break; }
+
+        let target_indices = &sorted_by_len[targets_start_idx..];
+        substring_hashes.clear();
+
+        let lead_power = pow_p[len - 1];
+
+        // Hash targets
+        for &target_id in target_indices {
+            let target_s = &unique_strings[target_id];
+            let target_bytes = target_s.as_bytes();
+            let mut current_hash: u64 = 0;
+            
+            // Initial window
+            for k in 0..len { 
+                current_hash = current_hash.wrapping_mul(P).wrapping_add(target_bytes[k] as u64); 
+            }
+            substring_hashes.entry(current_hash).or_insert((target_id, 0));
+
+            // Rolling window
+            for i in 1..=(target_bytes.len() - len) {
+                let prev = target_bytes[i - 1] as u64;
+                let new = target_bytes[i + len - 1] as u64;
+                current_hash = current_hash.wrapping_sub(prev.wrapping_mul(lead_power));
+                current_hash = current_hash.wrapping_mul(P).wrapping_add(new);
+                substring_hashes.entry(current_hash).or_insert((target_id, i as u32));
+            }
+        }
+
+        // Match candidates
+        for &short_id in candidates {
+            let short_bytes = unique_strings[short_id].as_bytes();
+            let mut h: u64 = 0;
+            for &b in short_bytes { h = h.wrapping_mul(P).wrapping_add(b as u64); }
+
+            if let Some(&(target_id, offset)) = substring_hashes.get(&h) {
+                // Verify to avoid collisions
+                let target_bytes = unique_strings[target_id].as_bytes();
+                if short_bytes == &target_bytes[offset as usize..(offset as usize + len)] {
+                    redirects[short_id] = (target_id, offset);
+                    is_active[short_id] = false;
+                }
+            }
+        }
+    }
+
+    // Resolve Step 2 pointers
+    let mut step2_resolution: Vec<(usize, u32)> = vec![(0, 0); num_uniques];
+    let mut active_roots = Vec::new();
+
+    for i in 0..num_uniques {
+        let mut curr = i;
+        let mut total_offset = 0;
+        let mut depth = 0;
+        while !is_active[curr] {
+            let (next, off) = redirects[curr];
+            if next == curr { break; } // safety
+            total_offset += off;
+            curr = next;
+            depth += 1;
+            if depth > 1000 { break; } // cycle breaker
+        }
+        step2_resolution[i] = (curr, total_offset);
+    }
+
+    for i in 0..num_uniques {
+        if is_active[i] {
+            active_roots.push(i);
+        }
+    }
+
+    println!("    Step 2 complete. Merging {} root strings...", active_roots.len());
+
+    // ==================================================================================
+    // STEP 3: Greedy Superstring Merge (Overlap Optimization)
+    // ==================================================================================
     
-    // Each string maps directly to itself with no offset
-    let step2_resolution: Vec<(usize, u32)> = (0..num_uniques).map(|i| (i, 0)).collect();
+    // Buckets for fast lookup: start_byte -> vec<root_id>
+    let mut by_start_byte: Vec<Vec<usize>> = vec![Vec::new(); 256];
+    let mut by_end_byte: Vec<Vec<usize>> = vec![Vec::new(); 256];
+    
+    let mut root_is_available = vec![false; num_uniques];
+    let mut root_final_offsets: HashMap<usize, u32> = HashMap::with_capacity(active_roots.len());
+    
+    let mut remaining_count = 0;
 
-    // PHASE 3: Node Pointer Updates
-    // Update each node to point to its label's new location in the compressed superstring
-    for (i, &phys_idx) in physical_indices.iter().enumerate() {
-        let unique_id = node_to_unique_id[i];
-        let (root_id, offset_in_root) = step2_resolution[unique_id];
-        let root_base = *root_final_offsets.get(&root_id).unwrap_or(&0);
-        let new_start = root_base + offset_in_root;
+    // Initialize buckets and handle empty strings immediately
+    for &root_id in &active_roots {
+        let s = &unique_strings[root_id];
+        if s.is_empty() { 
+            // FIX: Empty strings have no overlap potential but must have an entry.
+            // Map them to 0 (or any valid int), they read 0 bytes anyway.
+            root_final_offsets.insert(root_id, 0);
+            continue; 
+        }
 
-        // Write back the updated label start position
-        let w0 = nodes[phys_idx];
-        let new_w0 = (w0 & !MASK_LABEL_START) | (new_start & MASK_LABEL_START);
-        nodes[phys_idx] = new_w0;
+        let bytes = s.as_bytes();
+        by_start_byte[bytes[0] as usize].push(root_id);
+        by_end_byte[bytes[bytes.len()-1] as usize].push(root_id);
+        
+        root_is_available[root_id] = true;
+        remaining_count += 1;
     }
 
-    // Replace the original labels with our compressed superstring
+    let mut super_buffer = Vec::new();
+
+    while remaining_count > 0 {
+        // Pick a seed
+        let mut best_seed = None;
+        
+        // Quick seed selection: just pop from the active list until we find an available one
+        while let Some(candidate) = active_roots.pop() {
+            if root_is_available[candidate] {
+                best_seed = Some(candidate);
+                break;
+            }
+        }
+
+        if best_seed.is_none() { 
+            // This happens if remaining_count > 0 but we ran out of seeds in the stack.
+            // This should theoretically not happen if logic is perfect, but acts as safe exit.
+            break; 
+        }
+
+        let seed_id = best_seed.unwrap();
+        
+        root_is_available[seed_id] = false;
+        remaining_count -= 1;
+
+        // Chain structure: (RootID, Overlap_With_Previous)
+        let mut chain: VecDeque<(usize, u32)> = VecDeque::new();
+        chain.push_back((seed_id, 0));
+
+        let mut left_edge_id = seed_id;
+        let mut right_edge_id = seed_id;
+
+        // Grow chain greedy
+        loop {
+            let mut best_action = Action::None;
+            let mut max_savings = 0;
+
+            // Try Append
+            let r_str = &unique_strings[right_edge_id];
+            // Safety check although empty strings are filtered out
+            if !r_str.is_empty() {
+                let r_bytes = r_str.as_bytes();
+                let last_char = r_bytes[r_bytes.len() - 1] as usize;
+                
+                for &candidate_id in &by_start_byte[last_char] {
+                    if !root_is_available[candidate_id] { continue; }
+                    let c_str = &unique_strings[candidate_id];
+                    let overlap = calc_overlap(r_str, c_str);
+                    if overlap > max_savings {
+                        max_savings = overlap;
+                        best_action = Action::Append(candidate_id);
+                    }
+                }
+            }
+
+            // Try Prepend
+            let l_str = &unique_strings[left_edge_id];
+            if !l_str.is_empty() {
+                let l_bytes = l_str.as_bytes();
+                let first_char = l_bytes[0] as usize;
+
+                for &candidate_id in &by_end_byte[first_char] {
+                    if !root_is_available[candidate_id] { continue; }
+                    let c_str = &unique_strings[candidate_id];
+                    let overlap = calc_overlap(c_str, l_str);
+                    if overlap >= max_savings && overlap > 0 {
+                        max_savings = overlap;
+                        best_action = Action::Prepend(candidate_id);
+                    }
+                }
+            }
+
+            match best_action {
+                Action::None => break,
+                Action::Append(id) => {
+                    chain.push_back((id, max_savings as u32));
+                    root_is_available[id] = false;
+                    right_edge_id = id;
+                    remaining_count -= 1;
+                },
+                Action::Prepend(id) => {
+                    chain.push_front((id, max_savings as u32));
+                    root_is_available[id] = false;
+                    left_edge_id = id;
+                    remaining_count -= 1;
+                }
+            }
+        }
+        
+        // Finalize chain to buffer
+        if chain.is_empty() { continue; }
+
+        let current_write_pos = super_buffer.len() as u32;
+        
+        // Handle first item in chain
+        let first_id = chain[0].0;
+        root_final_offsets.insert(first_id, current_write_pos);
+        super_buffer.extend_from_slice(unique_strings[first_id].as_bytes());
+        
+        // Handle rest
+        let mut prev_id = first_id;
+        for i in 1..chain.len() {
+            let next_id = chain[i].0;
+            // For Prepend, we pushed (id, overlap).
+            // For Append, we pushed (id, overlap).
+            // In both cases, the 'overlap' value in the tuple represented overlap 
+            // relative to the neighbor in the direction we grew. 
+            // Since we ordered the deque correctly [Left ... Right], 
+            // we can just re-calculate linear overlaps to be 100% safe and simple.
+            
+            let prev_s = &unique_strings[prev_id];
+            let next_s = &unique_strings[next_id];
+            let ov = calc_overlap(prev_s, next_s);
+
+            // Write only the non-overlapping suffix
+            let next_bytes = next_s.as_bytes();
+            if ov < next_bytes.len() {
+                let to_write = &next_bytes[ov..];
+                // The logical start of this string is 'ov' bytes before the end of buffer
+                let start_pos = super_buffer.len() as u32 - ov as u32;
+                root_final_offsets.insert(next_id, start_pos);
+                super_buffer.extend_from_slice(to_write);
+            } else {
+                // Fully contained (should be rare given Step 2, but possible)
+                let start_pos = super_buffer.len() as u32 - ov as u32;
+                root_final_offsets.insert(next_id, start_pos);
+            }
+            prev_id = next_id;
+        }
+    }
+
+    // ==================================================================================
+    // STEP 4: Finalize Pointers
+    // ==================================================================================
+    println!("    Updating pointers...");
+
+    let mut i = 0;
+    while i < nodes.len() {
+        let node = NodeView::from_slice(nodes, i);
+        let unique_id = *node_to_unique_id.get(&i).expect("Node index missing from map");
+
+        let (root_id, offset_in_root) = step2_resolution[unique_id];
+
+        // Safety: root_id comes from active_roots.
+        // If root was empty string, it's in the map (offset 0).
+        // If root was merged, it's in the map.
+        let root_base = *root_final_offsets.get(&root_id).expect("Root ID missing from offsets");
+
+        NodeView::set_label_start(nodes, i, root_base + offset_in_root);
+
+        // Skip properly: 1 word for leaf, 2 words for internal
+        i += if node.is_leaf { 1 } else { 2 };
+    }
+
     labels.clear();
     labels.append(&mut super_buffer);
+
+    println!( "    Total compression complete. Final size: {} bytes.", labels.len());
 }
+
 
 fn common_prefix_len_case_insensitive(s1: &[u8], s2: &[u8]) -> usize {
     s1.iter().zip(s2).take_while(|(a, b)| a.eq_ignore_ascii_case(b)).count()
