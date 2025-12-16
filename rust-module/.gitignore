@@ -2,4 +2,4 @@
 **/*.rs.bk
 pkg/
 wasm-pack.log
-systems_neutron.json
+systems_*.json
