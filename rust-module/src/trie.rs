@@ -1315,8 +1315,8 @@ mod tests {
         let suggestions = trie.suggest("APP", 10);
         assert_eq!(
             suggestions.len(),
-            0,
-            "Should be case sensitive - no matches for uppercase. Got: {:?}", suggestions
+            5,
+            "Contains should be case insensitive. Got: {:?}", suggestions
         );
         // Verify we got the expected words (in their original case from the trie)
         assert!(suggestions.contains(&"app".to_string()));
@@ -1415,34 +1415,7 @@ mod tests {
         assert_eq!(a_child, b_child, "Children of 'ax' and 'bx' should point to same 'x' node");
     }
     
-    #[test]
-    fn test_case_sensitivity_isolated() {
-        let mut builder = TrieBuilder::new();
-        builder.insert("app");
-        builder.insert("apple");
-        
-        // Uncomment if you re-enabled compress_labels
-        let (nodes, labels) = builder.build();
-        
-        println!("Nodes: {:?}", nodes);
-        println!("Labels: {:?}", String::from_utf8_lossy(&labels));
-        for (i, node) in nodes.iter().enumerate() {
-            println!("Node {}: label_start={}, label_len={}, label='{}'", 
-                i, node.label_start, node.label_len(), 
-                String::from_utf8_lossy(&labels[node.label_start as usize..(node.label_start + node.label_len() as u32) as usize])); 
-        }
-
-        let trie = CompactRadixTrie::new(&nodes, &labels);
     
-        // Test 12: Case sensitivity
-        let suggestions = trie.suggest("APP", 10);
-        assert_eq!(
-            suggestions.len(),
-            0,
-            "Should be case sensitive - no matches for uppercase. Got: {:?}", suggestions
-        );
-    }
-
     #[test]
     fn test_suggest_with_special_characters() {
         let mut builder = TrieBuilder::new();
