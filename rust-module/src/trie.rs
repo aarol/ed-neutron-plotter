@@ -164,91 +164,150 @@ impl TrieBuilder {
     }
 
     /// Converts the pointer-based RadixTree into the flat, cache-friendly CompactRadixTrie.
+    /// Uses subtree sharing to compress the structure.
     pub fn build(&self) -> (Vec<CompactNode>, Vec<u8>) {
+        println!("Started building compact trie...");
+
         let mut nodes = Vec::new();
-        let mut labels = Vec::<u8>::new();
-        let mut queue = VecDeque::new();
+        let mut labels = Vec::new();
+        // Maps (Label, IsTerminal, FirstChildHash, NextSiblingHash) -> (Hash, NodeIndex)
+        // We need mapped Hash to allow hierarchical hashing, and NodeIndex to point to it.
+        // Actually the user said "map ... into the hash ... (which is an int). We'll then have another hashmap to map the hash int into an index".
+        // Let's follow that.
+        // Cache: (Label, IsTerminal, FirstChildHash, NextSiblingHash) -> HashID
+        let mut node_hash_map: HashMap<(String, bool, i32, i32), i32> = HashMap::new();
+        // Dedup: HashID -> NodeIndex
+        let mut dedup_map: HashMap<i32, u32> = HashMap::new();
+        
+        // Counter for unique hashes
+        let mut next_hash_id = 0;
 
-        // 1. Process Root
-        // The root usually has an empty label. We create it first.
-        let root_label_len = self.root.prefix.len();
-        if root_label_len > 127 {
-            panic!("Label too long for compact node");
-        }
-
-        labels.extend_from_slice(self.root.prefix.as_bytes());
-
-        nodes.push(CompactNode::new(
-            0, // Root label starts at 0
-            // Initialize with NO children. We will update this later if children exist.
-            COMPACT_NONE,
-            root_label_len as u16,
-            self.root.is_leaf,
-            false,
-        ));
-
-        // Queue tuple: (index_in_compact_vec, reference_to_original_node)
-        queue.push_back((0, &self.root));
-
-        // 2. BFS Traversal
-        while let Some((parent_idx, source_node)) = queue.pop_front() {
-            if source_node.children.is_empty() {
-                continue;
-            }
-
-            // Get children and sort them to ensure deterministic sibling order
-            // (Crucial for consistent linear iteration)
-            let mut child_list: Vec<&Node> = source_node.children.values().collect();
-            child_list.sort_by(|a, b| a.prefix.cmp(&b.prefix));
-
-            // The children will be stored contiguously starting at this index
-            let start_child_idx = nodes.len();
-
-            // Safety check for the 23-bit child index limit (8 million nodes)
-            if start_child_idx > 0x007FFFFF {
-                panic!("Trie too large: > 8M nodes");
-            }
-
-            // 3. Update Parent's "first_child" pointer
-            // We need to preserve the parent's existing flags/len, only updating the child index bits.
-            let parent_packed = nodes[parent_idx].packed;
-            // Clear the old child index (bottom 23 bits) and OR in the new index
-            nodes[parent_idx].packed = (parent_packed & !0x007FFFFF) | (start_child_idx as u32);
-
-            // 4. Process Children
-            for (i, child) in child_list.iter().enumerate() {
-                let label_len = child.prefix.len();
-                if label_len > 127 {
-                    panic!(
-                        "Label '{}' too long (max 127 bytes in compact trie)",
-                        child.prefix
-                    );
-                }
-
-                // Add label to the main byte array
-                let label_start = labels.len() as u32;
-                labels.extend_from_slice(child.prefix.as_bytes());
-
-                // Determine if this child has a subsequent sibling in the block
-                let has_next_sibling = i < child_list.len() - 1;
-
-                // Push the new compact node
-                nodes.push(CompactNode::new(
-                    label_start,
-                    COMPACT_NONE, // Placeholder, will be updated when we process this node
-                    label_len as u16,
-                    child.is_leaf,
-                    has_next_sibling,
-                ));
-
-                // Add to queue to process this child's children later
-                queue.push_back((start_child_idx + i, child));
-            }
-        }
+        // Process root. The root is a single node list.
+        // Note: The original implementation initialized root inside build.
+        // We'll treat root as the start of the recursion.
+        
+        let root_siblings = vec![&self.root];
+        self.build_recursive(
+            &root_siblings,
+            &mut nodes,
+            &mut labels,
+            &mut node_hash_map,
+            &mut dedup_map,
+            &mut next_hash_id
+        );
 
         compress_labels(&mut labels, &mut nodes);
 
         (nodes, labels)
+    }
+
+    fn build_recursive(
+        &self,
+        siblings: &[&Node],
+        nodes: &mut Vec<CompactNode>,
+        labels: &mut Vec<u8>,
+        node_hash_map: &mut HashMap<(String, bool, i32, i32), i32>,
+        dedup_map: &mut HashMap<i32, u32>,
+        next_hash_id: &mut i32,
+    ) -> (u32, i32) {
+        if siblings.is_empty() {
+            return (COMPACT_NONE, -1);
+        }
+
+        let start_idx = nodes.len() as u32;
+        let labels_start_len = labels.len();
+
+        // 1. Allocate space for siblings
+        // We push placeholder nodes. We'll fill them later.
+        for _ in siblings {
+            nodes.push(CompactNode::new(0, COMPACT_NONE, 0, false, false));
+        }
+
+        // To store computed properties for the backward pass
+        let mut sibling_data = Vec::with_capacity(siblings.len());
+
+        // 2. Recurse on children for each sibling
+        for node in siblings.iter() {
+            // Sort children
+            let mut children: Vec<&Node> = node.children.values().collect();
+            children.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+
+            // Recurse
+            let (child_idx, child_hash) = self.build_recursive(
+                &children,
+                nodes,
+                labels,
+                node_hash_map,
+                dedup_map,
+                next_hash_id,
+            );
+
+            // Add label to main array
+            let label_len = node.prefix.len();
+            if label_len > 127 {
+                panic!("Label '{}' too long", node.prefix);
+            }
+            let label_start = labels.len() as u32;
+            labels.extend_from_slice(node.prefix.as_bytes());
+
+            sibling_data.push((label_start, label_len, child_idx, child_hash));
+        }
+
+        // 3. Backward pass to compute hashes and resolve deduplication
+        let mut next_sibling_hash = -1; // -1 for no sibling
+
+        // We iterate backwards
+        for i in (0..siblings.len()).rev() {
+            let node = siblings[i];
+            let (label_start, label_len, child_idx, child_hash) = sibling_data[i];
+            
+            let is_terminal = node.is_leaf;
+            
+            // Compute hash for this node (representing the subtree starting here)
+            let key = (node.prefix.clone(), is_terminal, child_hash, next_sibling_hash);
+            
+            let my_hash = if let Some(&h) = node_hash_map.get(&key) {
+                h
+            } else {
+                let h = *next_hash_id;
+                *next_hash_id += 1;
+                node_hash_map.insert(key, h);
+                h
+            };
+
+            // Update the node in the vector
+            // Note: We need to set has_next_sibling based on loop index
+            let has_next = i < siblings.len() - 1;
+            
+            // Reconstruct the node with correct values
+            nodes[(start_idx as usize) + i] = CompactNode::new(
+                label_start,
+                child_idx,
+                label_len as u16,
+                is_terminal,
+                has_next,
+            );
+
+            // If this is the FIRST sibling in the chain, we check for deduplication of the WHOLE chain
+            if i == 0 {
+                if let Some(&existing_idx) = dedup_map.get(&my_hash) {
+                    // FOUND DUPLICATE!
+                    // Rollback nodes and labels
+                    nodes.truncate(start_idx as usize);
+                    labels.truncate(labels_start_len);
+                    return (existing_idx, my_hash);
+                } else {
+                    // Register this new unique chain
+                    dedup_map.insert(my_hash, start_idx);
+                    return (start_idx, my_hash);
+                }
+            }
+
+            next_sibling_hash = my_hash;
+        }
+        
+        // This part is unreachable because the loop always runs at least once and handles i==0 return.
+        (COMPACT_NONE, -1)
     }
 
     // Helper to find length of common prefix
@@ -367,6 +426,15 @@ impl<'a> CompactRadixTrie<'a> {
                 let child_label = self.get_label(child_idx);
                 let current_key_part = &prefix_bytes[key_cursor..];
                 let common_len = common_prefix_len(child_label, current_key_part);
+                
+                // Debug print
+                if prefix == "APP" {
+                     println!("Debug: child_idx={}, label='{}', key_part='{}', common={}", 
+                         child_idx, 
+                         String::from_utf8_lossy(child_label), 
+                         String::from_utf8_lossy(current_key_part), 
+                         common_len);
+                }
 
                 if common_len > 0 {
                     buffer.extend_from_slice(&child_label[..common_len]);
@@ -521,7 +589,7 @@ pub fn compress_labels(labels: &mut Vec<u8>, nodes: &mut Vec<CompactNode>) {
 
     let total_nodes = nodes.len();
     println!(
-        "Starting multi-stage compression on {} nodes...",
+        "Starting multi-stage compression on {} strings...",
         total_nodes
     );
 
@@ -895,10 +963,16 @@ pub fn compress_labels(labels: &mut Vec<u8>, nodes: &mut Vec<CompactNode>) {
 // Helper: Calculate overlap length
 
 // Helper to find length of common prefix
+// fn common_prefix_len(s1: &[u8], s2: &[u8]) -> usize {
+//     s1.iter()
+//         .zip(s2)
+//         .take_while(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+//         .count()
+// }
 fn common_prefix_len(s1: &[u8], s2: &[u8]) -> usize {
     s1.iter()
         .zip(s2)
-        .take_while(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+        .take_while(|(a, b)| a == b)
         .count()
 }
 
@@ -1123,7 +1197,7 @@ mod tests {
         assert_eq!(
             suggestions.len(),
             0,
-            "Should be case sensitive - no matches for uppercase"
+            "Should be case sensitive - no matches for uppercase. Got: {:?}", suggestions
         );
     }
 
@@ -1163,6 +1237,85 @@ mod tests {
         assert_eq!(suggestions.len(), 2);
         assert!(suggestions.contains(&"careful".to_string()));
         assert!(suggestions.contains(&"carefully".to_string()));
+    }
+
+    #[test]
+    fn test_deduplication() {
+        let mut builder = TrieBuilder::new();
+        // Insert "ax" and "bx". 
+        // "x" is terminal for both.
+        // Structure:
+        // Root children: a, b.
+        // a -> x
+        // b -> x
+        // The 'x' node should be shared.
+        // Create "a->x" and "b->x" structure explicitly.
+        builder.insert("a");
+        builder.insert("ax");
+        builder.insert("b");
+        builder.insert("bx");
+        
+        // Disable println in build (if possible) or just ignore noise.
+        let (nodes, _labels) = builder.build();
+        
+        // Root is at 0.
+        let root = &nodes[0];
+        // Root children: 'a' and 'b'.
+        // They should be siblings.
+        let child_start = root.first_child();
+        assert!(child_start != crate::trie::COMPACT_NONE);
+        
+        // We expect child_start to be 'a' (sorted 'a' < 'b')
+        // And child_start + 1 to be 'b'.
+        
+        let a_idx = child_start;
+        let b_idx = child_start + 1;
+        
+        let a_node = &nodes[a_idx as usize];
+        let b_node = &nodes[b_idx as usize];
+        
+        // Verify 'a' has next sibling (which is 'b')
+        assert!(a_node.has_next_sibling());
+        // Verify 'b' does NOT have next sibling
+        assert!(!b_node.has_next_sibling());
+        
+        // Check children of a and b
+        let a_child = a_node.first_child();
+        let b_child = b_node.first_child();
+        
+        assert!(a_child != crate::trie::COMPACT_NONE);
+        assert!(b_child != crate::trie::COMPACT_NONE);
+        
+        // The deduplication logic should make them point to the SAME index
+        assert_eq!(a_child, b_child, "Children of 'ax' and 'bx' should point to same 'x' node");
+    }
+    
+    #[test]
+    fn test_case_sensitivity_isolated() {
+        let mut builder = TrieBuilder::new();
+        builder.insert("app");
+        builder.insert("apple");
+        
+        // Uncomment if you re-enabled compress_labels
+        let (nodes, labels) = builder.build();
+        
+        println!("Nodes: {:?}", nodes);
+        println!("Labels: {:?}", String::from_utf8_lossy(&labels));
+        for (i, node) in nodes.iter().enumerate() {
+            println!("Node {}: label_start={}, label_len={}, label='{}'", 
+                i, node.label_start, node.label_len(), 
+                String::from_utf8_lossy(&labels[node.label_start as usize..(node.label_start + node.label_len() as u32) as usize])); 
+        }
+
+        let trie = CompactRadixTrie::new(&nodes, &labels);
+    
+        // Test 12: Case sensitivity
+        let suggestions = trie.suggest("APP", 10);
+        assert_eq!(
+            suggestions.len(),
+            0,
+            "Should be case sensitive - no matches for uppercase. Got: {:?}", suggestions
+        );
     }
 
     #[test]
