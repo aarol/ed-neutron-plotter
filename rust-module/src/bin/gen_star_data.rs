@@ -97,20 +97,9 @@ fn main() -> io::Result<()> {
     let trie = CompactRadixTrie::new(&nodes, &labels);
 
     dbg!(trie.suggest("Speam", 10));
-    println!("Trie has {} nodes", trie.nodes.len());
+
+    trie.analyze_stats();
     println!("Uses {} MB of space", trie.size_in_bytes() / 1024 / 1024);
-
-    let label_bytes_before = trie.labels.len();
-
-    // trie.deduplicate_labels();
-
-    println!(
-        "After deduplication, uses {} MB of space (labels reduced from {} to {} bytes)",
-        trie.nodes.len() * std::mem::size_of::<CompactNode>() / 1024 / 1024
-            + trie.labels.len() / 1024 / 1024,
-        label_bytes_before,
-        trie.labels.len()
-    );
 
     // Write trie to file
     let mut trie_file = std::fs::File::create(out_dir.join("search_trie.bin"))?;
