@@ -31,6 +31,11 @@ fn analyze() -> io::Result<()> {
         println!("  - {}", suggestion);
     }
 
+    println!("\nSuggestions for 'Speam':");
+    for suggestion in trie.suggest("Speam", 10) {
+        println!("  - {}", suggestion);
+    }
+
     Ok(())
 }
 
