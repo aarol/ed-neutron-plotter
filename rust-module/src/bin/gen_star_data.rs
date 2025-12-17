@@ -9,6 +9,7 @@ use rust_module::{
 
 use rust_module::star::{Partition, reorder_for_partitions};
 
+#[allow(dead_code)]
 fn analyze() -> io::Result<()> {
     let mut file = std::io::BufReader::new(std::fs::File::open("../public/data/search_trie.bin")?);
 
@@ -75,21 +76,21 @@ fn main() -> io::Result<()> {
         trie.insert(name);
     })?;
 
-    // parser2.for_each(|name, coords| {
-    //     if count % 100000 == 0 {
-    //         println!("Processing line {}", count);
-    //     }
-    //     count += 1;
+    parser2.for_each(|name, _coords| {
+        if count % 100000 == 0 {
+            println!("Processing line {}", count);
+        }
+        count += 1;
 
-    //     // Don't show these yet
-    //     // stars.push(Star::new(
-    //     //     (coords.x / 1000.0) as f32,
-    //     //     (coords.y / 1000.0) as f32,
-    //     //     (coords.z / 1000.0) as f32,
-    //     // ));
+        // Don't show these yet
+        // stars.push(Star::new(
+        //     (coords.x / 1000.0) as f32,
+        //     (coords.y / 1000.0) as f32,
+        //     (coords.z / 1000.0) as f32,
+        // ));
 
-    //     trie.insert(name);
-    // })?;
+        trie.insert(name);
+    })?;
 
     let k_splits = 3;
     let num_partitions = 1 << k_splits;

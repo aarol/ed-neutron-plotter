@@ -5,7 +5,7 @@ pub mod utils;
 
 use wasm_bindgen::prelude::*;
 
-use crate::trie::CompactRadixTrie;
+use crate::{star::Coords, trie::CompactRadixTrie};
 
 #[wasm_bindgen]
 extern "C" {
@@ -36,4 +36,18 @@ pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
     let trie = CompactRadixTrie::from_bytes(trie);
 
     JsValue::from_bool(trie.contains(prefix))
+}
+
+#[wasm_bindgen]
+pub fn find_route(start: JsValue, end: JsValue) -> Vec<JsValue> {
+
+    let start: Coords = serde_wasm_bindgen::from_value(start).unwrap();
+    let end: Coords = serde_wasm_bindgen::from_value(end).unwrap();
+
+    log(&format!(
+        "Finding route from ({}, {}, {}) to ({}, {}, {})",
+        start.x, start.y, start.z, end.x, end.y, end.z
+    ));
+
+    vec![]
 }

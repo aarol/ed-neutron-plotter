@@ -5,6 +5,8 @@
 Download systems_neutron from https://spansh.co.uk/dumps
 and extract it into rust_module/systems_neutron.json
 
+Also download "systems_1day and extract it as well.
+
 Then run the following command:
 
 ```
