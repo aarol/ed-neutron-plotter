@@ -16,6 +16,11 @@ const MASK_HAS_NEXT: u32   = 1 << 30;
 const MASK_LABEL_LEN: u32  = 0x3E000000; // 5 bits (25..29) -> max label length 31
 const MASK_LABEL_START: u32 = 0x01FFFFFF; // 25 bits (0..24) -> 32MB Label Limit
 
+// Builder Tuning
+const MIN_LABEL_LEN: usize = 5; // Smaller value produces faster lookup time but more nodes
+const MERGE_MAX_CHILD_COUNT: usize = 6;
+
+
 // Internal Node Only (Word 1)
 const MASK_IS_TERMINAL: u32 = 1 << 31;
 const MASK_CHILD_IDX: u32   = 0x7FFFFFFF; // 31 bits
@@ -79,6 +84,58 @@ impl NodeView {
 // =========================================================================
 // BUILDER
 // =========================================================================
+
+#[derive(Debug)]
+struct LinearNode {
+    prefix: String,
+    children: Vec<LinearNode>,
+    is_leaf: bool,
+}
+
+impl LinearNode {
+    fn from_node_tree(node: &Node) -> Vec<LinearNode> {
+        Self::expand_node(node, String::new())
+    }
+
+    fn expand_node(node: &Node, accumulated_prefix: String) -> Vec<LinearNode> {
+        // Effective label including any passed-down prefix
+        let mut full_label = accumulated_prefix;
+        full_label.push_str(&node.prefix);
+        
+        // Check merge conditions
+        let should_merge = !node.is_leaf 
+            && !node.children.is_empty()
+            && full_label.len() < MIN_LABEL_LEN
+            && node.children.len() <= MERGE_MAX_CHILD_COUNT;
+            
+        if should_merge {
+            let mut merged_nodes = Vec::new();
+            for child in node.children.values() {
+                // Pass down the accumulated prefix.
+                // The child thinks its prefix starts after the parent's prefix, so we just pass the full label.
+                let children_nodes = Self::expand_node(child, full_label.clone());
+                merged_nodes.extend(children_nodes);
+            }
+            merged_nodes
+        } else {
+            // Keep this node
+            let mut children_linear = Vec::new();
+            // Important: Sort children for deterministic output
+            let mut child_refs: Vec<&Node> = node.children.values().collect();
+            child_refs.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+            
+            for child in child_refs {
+                children_linear.extend(Self::expand_node(child, String::new()));
+            }
+            
+            vec![LinearNode {
+                prefix: full_label,
+                children: children_linear,
+                is_leaf: node.is_leaf,
+            }]
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct Node {
@@ -173,6 +230,29 @@ impl TrieBuilder {
             return (Vec::new(), Vec::new());
         }
 
+        // Convert the tree to linear nodes using the collapsing logic
+        println!("  Collapsing short nodes...");
+        let root_linear = LinearNode::from_node_tree(&self.root);
+
+        // If the root was collapsed into multiple children (e.g. "apple", "banana"),
+        // we must re-create a virtual root because the runtime expects a single entry point (Node 0).
+        // If it collapsed into a single child (e.g. "root" -> "single"), that "single" is now the valid root (Node 0).
+        // If the root was collapsed into multiple children (e.g. "apple", "banana"),
+        // we must re-create a virtual root because the runtime expects a single entry point (Node 0).
+        // If it collapsed into a single child (e.g. "root" -> "single"), that "single" is now the valid root (Node 0).
+        let mut final_roots = if root_linear.len() != 1 || !root_linear[0].prefix.is_empty() {
+            vec![LinearNode {
+                prefix: String::new(),
+                children: root_linear,
+                is_leaf: self.root.is_leaf, 
+            }]
+        } else {
+            root_linear
+        };
+
+        // Ensure roots are sorted for better hashing
+        final_roots.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+
         let mut nodes = Vec::new();
         let mut labels = Vec::new();
 
@@ -181,9 +261,10 @@ impl TrieBuilder {
         let mut dedup_map: HashMap<i32, u32> = HashMap::new();
         let mut next_hash_id = 0;
 
-        let root_siblings = vec![&self.root];
+        let root_siblings_refs: Vec<&LinearNode> = final_roots.iter().collect();
+
         self.build_recursive(
-            &root_siblings,
+            &root_siblings_refs,
             &mut nodes,
             &mut labels,
             &mut node_hash_map,
@@ -198,7 +279,7 @@ impl TrieBuilder {
 
     fn build_recursive(
         &self,
-        siblings: &[&Node],
+        siblings: &[&LinearNode],
         nodes: &mut Vec<u32>,
         labels: &mut Vec<u8>,
         node_hash_map: &mut HashMap<(String, bool, i32, i32), i32>,
@@ -232,8 +313,8 @@ impl TrieBuilder {
         let mut sibling_data = Vec::with_capacity(siblings.len());
 
         for node in siblings.iter() {
-            let mut children: Vec<&Node> = node.children.values().collect();
-            children.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+            let children: Vec<&LinearNode> = node.children.iter().collect();
+            // Children should already be sorted in LinearNode construction
 
             let (child_idx, child_hash) = self.build_recursive(
                 &children,
@@ -245,7 +326,7 @@ impl TrieBuilder {
             );
 
             let label_len = node.prefix.len();
-            if label_len > 31 { panic!("Label too long (max 31 bytes)"); }  // 5-bit field can store 0-31
+            if label_len > 31 { panic!("Label too long (max 31 bytes): '{}'", node.prefix); }
             let label_start = labels.len() as u32;
             labels.extend_from_slice(node.prefix.as_bytes());
 
@@ -600,27 +681,102 @@ impl<'a> CompactRadixTrie<'a> {
 
     pub fn analyze_stats(&self) {
         let mut total_nodes = 0;
-        let mut leaf_structs = 0;
-        let mut internal_structs = 0;
-        
+        let mut leaf_nodes = 0;
+        let mut label_lengths = Vec::new();
+        let mut children_counts = Vec::new();
+
         let mut curr = 0;
         while curr < self.nodes.len() {
-            total_nodes += 1;
             let node = NodeView::from_slice(self.nodes, curr);
-            if node.is_leaf {
-                leaf_structs += 1;
-                curr += 1;
-            } else {
-                internal_structs += 1;
-                curr += 2;
+            total_nodes += 1;
+            
+            if node.is_terminal {
+                leaf_nodes += 1;
             }
+            label_lengths.push(node.label_len as usize);
+
+            let mut child_count = 0;
+            let mut child_ptr = node.first_child;
+            if child_ptr != COMPACT_NONE {
+                loop {
+                    child_count += 1;
+                    // We need to look at the child node to see if it has a next sibling
+                    // and how large it is to advance the pointer.
+                    let child_node = NodeView::from_slice(self.nodes, child_ptr as usize);
+                    
+                    if child_node.has_next {
+                         child_ptr += if child_node.is_leaf { 1 } else { 2 };
+                    } else {
+                        break;
+                    }
+                }
+            }
+            children_counts.push(child_count);
+
+            curr += if node.is_leaf { 1 } else { 2 };
         }
-        
+
         println!("=== Trie Statistics ===");
         println!("Total Nodes: {}", total_nodes);
-        println!("Leaf Structs (4 bytes): {}", leaf_structs);
-        println!("Internal Structs (8 bytes): {}", internal_structs);
-        println!("Total Node Bytes: {}", (leaf_structs * 4) + (internal_structs * 8));
+        println!("Leaf Nodes: {} ({:.2}%)", leaf_nodes, if total_nodes > 0 { (leaf_nodes as f64 / total_nodes as f64) * 100.0 } else { 0.0 });
+        
+        // Label Length Stats
+        let min_label = label_lengths.iter().min().unwrap_or(&0);
+        let max_label = label_lengths.iter().max().unwrap_or(&0);
+        let active_labels: Vec<&usize> = label_lengths.iter().filter(|&&l| l > 0).collect();
+        let avg_label = if !active_labels.is_empty() {
+             active_labels.iter().map(|&&l| l).sum::<usize>() as f64 / active_labels.len() as f64
+        } else { 0.0 };
+        
+        println!("Label Lengths: Min={}, Max={}, Avg(non-zero)={:.2}", min_label, max_label, avg_label);
+
+        // Label Length Distribution
+        let mut label_buckets = vec![0; 11]; // 0..10 and 10+
+        for &l in &label_lengths {
+            if l >= 10 {
+                label_buckets[10] += 1;
+            } else {
+                label_buckets[l] += 1;
+            }
+        }
+        println!("Label Length Distribution:");
+        for i in 0..10 {
+             if label_buckets[i] > 0 {
+                println!("  {}: {}", i, label_buckets[i]);
+            }
+        }
+        if label_buckets[10] > 0 {
+            println!("  10+: {}", label_buckets[10]);
+        }
+        
+        // Children Count Stats
+        let min_children = children_counts.iter().min().unwrap_or(&0);
+        let max_children = children_counts.iter().max().unwrap_or(&0);
+        let avg_children = if !children_counts.is_empty() {
+             children_counts.iter().sum::<usize>() as f64 / children_counts.len() as f64
+        } else { 0.0 };
+        
+        println!("Children Per Node: Min={}, Max={}, Avg={:.2}", min_children, max_children, avg_children);
+
+        // Distribution buckets for children
+        let mut buckets = vec![0; 11]; // 0..9 and 10+
+        for &c in &children_counts {
+            if c >= 10 {
+                buckets[10] += 1;
+            } else {
+                buckets[c] += 1;
+            }
+        }
+        println!("Children amount Distribution:");
+        for i in 0..10 {
+            if buckets[i] > 0 {
+                println!("  {}: {}", i, buckets[i]);
+            }
+        }
+        if buckets[10] > 0 {
+            println!("  10+: {}", buckets[10]);
+        }
+        println!("=======================");
     }
 
 }
@@ -1401,5 +1557,53 @@ mod tests {
         assert_eq!(suggestions.len(), 2);
         assert!(suggestions.contains(&"apple".to_string()));
         assert!(suggestions.contains(&"ApplePie".to_string()));
+    }
+
+    #[test]
+    fn test_node_collapsing() {
+        let mut builder = TrieBuilder::new();
+        
+        // Case 1: Simple leaf
+        builder.insert("abc");
+        
+        // Case 2: Intermediate node collapsing
+        // We insert "de" and "df".
+        // The builder creates: Root -> "d" -> ["e", "f"]
+        // "d" is intermediate, not leaf. Length 1 < MIN_LABEL_LEN (2).
+        // Should merge "d" into "e" and "f".
+        // Result: Root -> ["de", "df"].
+        builder.insert("de");
+        builder.insert("df");
+
+        let (nodes, labels) = builder.build();
+        let trie = CompactRadixTrie::new(&nodes, &labels);
+        
+        trie.analyze_stats();
+
+        // Verify content availability
+        if !trie.contains("abc") { panic!("Failed to find 'abc'"); }
+        if !trie.contains("de") { panic!("Failed to find 'de'"); }
+        if !trie.contains("df") { panic!("Failed to find 'df'"); }
+        
+        // Verify structure indirectly via stats or assumptions
+        // If "d" was merged, we expect 3 nodes total (abc, de, df) + maybe root virtual handling?
+        // Trie structure: Root (virtual) -> 3 siblings.
+        // Array nodes: 3 leaf nodes (1 word each). Total 3 words.
+        // If "d" was NOT merged: "d" (2 words) + "e" (1) + "f" (1) + "abc" (1). Total 5 words.
+        
+        // Let's count nodes by iterating
+        let mut node_count = 0;
+        let mut curr = 0;
+        while curr < trie.nodes.len() {
+            let node = NodeView::from_slice(trie.nodes, curr);
+            node_count += 1;
+            curr += if node.is_leaf { 1 } else { 2 };
+        }
+        
+        // Expect 4 nodes if collapsed ("abc", "de", "df") PLUS Root.
+        // Node 0: Root (empty, virtual).
+        // Node 1, 2, 3: "abc", "de", "df".
+        // Total 4.
+        assert_eq!(node_count, 4, "Expected 4 nodes after collapsing (Root + 3 children). Found {}.", node_count);
     }
 }

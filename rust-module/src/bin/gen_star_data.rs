@@ -48,14 +48,14 @@ fn main() -> io::Result<()> {
 
     let neutrons = std::fs::File::open("systems_neutron.json")?;
 
-    let systems = std::fs::File::open("systems_1day.json")?;
+    // let systems = std::fs::File::open("systems_1day.json")?;
 
     let mut stars = vec![];
     let mut trie = TrieBuilder::new();
 
     let parser = SystemParser::new(neutrons)?;
 
-    let parser2 = SystemParser::new(systems)?;
+    // let parser2 = SystemParser::new(systems)?;
 
     let mut count = 0;
     parser.for_each(|name, coords| {
@@ -75,11 +75,11 @@ fn main() -> io::Result<()> {
         trie.insert(name);
     })?;
 
-    parser2.for_each(|name, _coords| {
-        if count % 100000 == 0 {
-            println!("Processing line {}", count);
-        }
-        count += 1;
+    // parser2.for_each(|name, _coords| {
+    //     if count % 100000 == 0 {
+    //         println!("Processing line {}", count);
+    //     }
+    //     count += 1;
 
         // Don't show these yet
         // stars.push(Star::new(
@@ -88,8 +88,8 @@ fn main() -> io::Result<()> {
         //     (coords.z / 1000.0) as f32,
         // ));
 
-        trie.insert(name);
-    })?;
+    //     trie.insert(name);
+    // })?;
 
     let star_coords: Vec<[f32; 3]> = stars.iter().map(|s| [s.x, s.y, s.z]).collect();
     let kdtree = kiddo::ImmutableKdTree::new_from_slice(&star_coords);
@@ -110,7 +110,7 @@ fn main() -> io::Result<()> {
     dbg!(trie.suggest("Speam", 10));
 
     trie.analyze_stats();
-    println!("Uses {} MB of space", trie.size_in_bytes() / 1024 / 1024);
+    println!("Uses {:.1} MB of space", trie.size_in_bytes() as f64 / 1024.0 / 1024.0);
 
     // Write trie to file
     let mut trie_file = std::fs::File::create(out_dir.join("search_trie.bin"))?;
