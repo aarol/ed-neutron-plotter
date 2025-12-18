@@ -8,7 +8,9 @@ import * as wasm from "../rust-module/pkg";
 async function main() {
   const galaxy = new Galaxy();
   await galaxy.init();
+
   let trie_bin: undefined | ArrayBuffer = undefined;
+  let route_kdtree: undefined | ArrayBuffer = undefined;
 
   // Create route dialog
   const routeDialog = new RouteDialog({
@@ -20,11 +22,32 @@ async function main() {
     }
   });
 
+  const openRoutePanel = async (word: string) => {
+    // Pre-fill the "to" field with the current search term
+    routeDialog.setToValue(word);
+
+    // Open panel and wait for user configuration
+    const routeConfig = await routeDialog.open();
+
+    if (routeConfig) {
+      console.log('Route configuration:', routeConfig);
+
+      if (!route_kdtree) {
+        console.log("Fetching route_kdtree.bin..")
+        debugger
+        route_kdtree = await fetch("data/star_kdtree.bin").then(r => r.arrayBuffer())
+      }
+
+      const res = wasm.find_route(new Uint8Array(route_kdtree!), routeConfig.from.coords, routeConfig.to.coords)
+      console.log(res)
+    }
+  };
+
   const searchBox = new SearchBox({
     placeholder: "Enter target star..",
     onSearch: async (query: string) => {
-      const target = await api.getStarCoords(query);
-      galaxy.setTarget(target);
+      // Open the route panel when Enter is pressed
+      openRoutePanel(query);
     },
     onSuggest: (word: string) => {
       if (trie_bin) {
@@ -33,17 +56,7 @@ async function main() {
       return [];
     },
     onClickRoute: async (word: string) => {
-      // Pre-fill the "to" field with the current search term
-      routeDialog.setToValue(word);
-
-      // Open dialog and wait for user configuration
-      const routeConfig = await routeDialog.open();
-
-      if (routeConfig) {
-        console.log('Route configuration:', routeConfig);
-        // TODO: Implement route generation with the configuration
-        // You can use routeConfig.from, routeConfig.to, and routeConfig.alreadySupercharged
-      }
+      openRoutePanel(word);
     }
   });
 

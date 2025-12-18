@@ -11,7 +11,11 @@ export interface Coords {
   z: number
 }
 
-async function getStarCoords(star: string): Promise<Vector3> {
+export function vec3FromCoords(coords: Coords): Vector3 {
+  return new Vector3(coords.x, coords.y, coords.z);
+}
+
+async function getStarCoords(star: string): Promise<Coords> {
   const apiUrl = "https://www.edsm.net/api-v1/system"
 
   const response = await fetch(`${apiUrl}?systemName=${encodeURI(star)}&showCoordinates=1`);
@@ -22,11 +26,11 @@ async function getStarCoords(star: string): Promise<Vector3> {
 
   const data: SystemInfoResponse = await response.json();
 
-  return new Vector3(
-    -data.coords.x, // All x-coordinates are negative to what you see in game
-    data.coords.y,
-    data.coords.z
-  ).divideScalar(1000)
+  return {
+    x: -data.coords.x / 1000,
+    y: data.coords.y / 1000,
+    z: data.coords.z / 1000,
+  }
 }
 
 export const api = {

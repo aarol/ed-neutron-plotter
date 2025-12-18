@@ -1,5 +1,6 @@
 import { SearchBox, type SearchBoxOptions } from "./search";
 import styles from "./route-dialog.module.css";
+import { api } from "./api";
 
 export interface RouteDialogOptions {
   onSuggest: (word: string) => string[];
@@ -7,8 +8,14 @@ export interface RouteDialogOptions {
 }
 
 export interface RouteConfig {
-  from: string;
-  to: string;
+  from: {
+    name: string;
+    coords: {x: number; y: number; z: number}
+  };
+  to: {
+    name: string;
+    coords: {x: number; y: number; z: number}
+  };
   alreadySupercharged: boolean;
 }
 
@@ -18,7 +25,7 @@ function createElement<T extends keyof HTMLElementTagNameMap>(
   options: {
     className?: string;
     attributes?: Record<string, string>;
-    children?: (HTMLElement | string)[];
+    children?: (HTMLElement | string | Text)[];
   } = {}
 ): HTMLElementTagNameMap[T] {
   const element = document.createElement(tag);
@@ -47,24 +54,27 @@ function createElement<T extends keyof HTMLElementTagNameMap>(
 }
 
 export class RouteDialog {
-  private dialog: HTMLDialogElement;
+  private panel: HTMLDivElement;
   private fromSearchBox!: SearchBox;
   private toSearchBox!: SearchBox;
   private superchargedCheckbox!: HTMLInputElement;
   private onRouteGeneratedCallback?: (config: RouteConfig) => void;
+  private isVisible: boolean = false;
 
   private options: RouteDialogOptions;
 
   constructor(options: RouteDialogOptions) {
     this.options = options;
-    this.dialog = this.createDialog();
+    this.panel = this.createPanel();
     this.setupEventListeners();
+    // Mount immediately so it's always ready
+    document.body.appendChild(this.panel);
   }
 
-  private createDialog(): HTMLDialogElement {
-    // Create dialog element
-    const dialog = createElement('dialog', {
-      className: styles.dialog
+  private createPanel(): HTMLDivElement {
+    // Create panel element
+    const panel = createElement('div', {
+      className: styles.panel
     });
 
     // Create header
@@ -95,17 +105,19 @@ export class RouteDialog {
       className: styles.checkboxSection
     });
 
-    const checkboxLabel = createElement('label', {
-      className: styles.checkboxLabel
-    });
-
     this.superchargedCheckbox = createElement('input', {
       attributes: { type: 'checkbox' },
       className: styles.checkbox
     });
 
-    checkboxLabel.appendChild(this.superchargedCheckbox);
-    checkboxLabel.appendChild(document.createTextNode('Already supercharged'));
+    const checkboxLabel = createElement('label', {
+      className: styles.checkboxLabel,
+      children: [
+        this.superchargedCheckbox,
+        document.createTextNode('Already supercharged')
+      ]
+    });
+
     checkboxSection.appendChild(checkboxLabel);
 
     // Create buttons
@@ -128,17 +140,17 @@ export class RouteDialog {
     buttonGroup.appendChild(cancelBtn);
     buttonGroup.appendChild(generateBtn);
 
-    // Assemble dialog
-    dialog.appendChild(header);
-    dialog.appendChild(fromSection);
-    dialog.appendChild(toSection);
-    dialog.appendChild(checkboxSection);
-    dialog.appendChild(buttonGroup);
+    // Assemble panel
+    panel.appendChild(header);
+    panel.appendChild(fromSection);
+    panel.appendChild(toSection);
+    panel.appendChild(checkboxSection);
+    panel.appendChild(buttonGroup);
 
     // Create SearchBox instances
     this.createSearchBoxes(fromSection, toSection);
 
-    return dialog;
+    return panel;
   }
 
   private createFormSection(labelText: string, className: string): HTMLDivElement {
@@ -158,7 +170,7 @@ export class RouteDialog {
   private createSearchBoxes(fromSection: HTMLDivElement, toSection: HTMLDivElement): void {
     const searchBoxOptions: Omit<SearchBoxOptions, 'placeholder'> = {
       onSuggest: this.options.onSuggest,
-      onClickRoute: () => { }, // Disable route button in dialog
+      onClickRoute: undefined,
       className: styles.dialogSearchBox
     };
 
@@ -177,34 +189,38 @@ export class RouteDialog {
   }
 
   private setupEventListeners(): void {
-    const closeBtn = this.dialog.querySelector(`.${styles.closeBtn}`) as HTMLButtonElement;
-    const cancelBtn = this.dialog.querySelector(`.${styles.cancelBtn}`) as HTMLButtonElement;
-    const generateBtn = this.dialog.querySelector(`.${styles.generateBtn}`) as HTMLButtonElement;
+    const closeBtn = this.panel.querySelector(`.${styles.closeBtn}`) as HTMLButtonElement;
+    const cancelBtn = this.panel.querySelector(`.${styles.cancelBtn}`) as HTMLButtonElement;
+    const generateBtn = this.panel.querySelector(`.${styles.generateBtn}`) as HTMLButtonElement;
 
     // Button click handlers
     closeBtn.addEventListener('click', () => this.close());
     cancelBtn.addEventListener('click', () => this.close());
     generateBtn.addEventListener('click', () => this.handleGenerate());
 
-    // Dialog backdrop click
-    this.dialog.addEventListener('click', (event) => {
-      if (event.target === this.dialog) {
-        this.close();
-      }
-    });
-
-    // Escape key
-    this.dialog.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
+    // Escape key (global listener)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isVisible) {
         this.close();
       }
     });
   }
 
-  private handleGenerate(): void {
+  private async handleGenerate(): Promise<void> {
+
+    const from = this.fromSearchBox.getValue().trim();
+    const fromCoords = await api.getStarCoords(from);
+    const to = this.toSearchBox.getValue().trim();
+    const toCoords = await api.getStarCoords(to);
     const config: RouteConfig = {
-      from: this.fromSearchBox.getValue().trim(),
-      to: this.toSearchBox.getValue().trim(),
+      from: {
+        name: from,
+        coords: fromCoords
+      },
+      to: {
+        name: to,
+        coords: toCoords
+      },
       alreadySupercharged: this.superchargedCheckbox.checked
     };
 
@@ -218,29 +234,14 @@ export class RouteDialog {
 
   public open(): Promise<RouteConfig | null> {
     return new Promise((resolve) => {
-      // Reset form
-      this.fromSearchBox.setValue('');
-      this.toSearchBox.setValue('');
-      this.superchargedCheckbox.checked = false;
-
       // Set up one-time callback
       this.onRouteGeneratedCallback = (config: RouteConfig) => {
         resolve(config);
       };
 
-      // Handle dialog close without generation
-      const handleClose = () => {
-        resolve(null);
-        this.dialog.removeEventListener('close', handleClose);
-      };
-      this.dialog.addEventListener('close', handleClose);
-
-      // Mount and show dialog
-      if (!this.dialog.parentNode) {
-        document.body.appendChild(this.dialog);
-      }
-
-      this.dialog.showModal();
+      // Show panel
+      this.panel.classList.add(styles.panelVisible);
+      this.isVisible = true;
 
       // Focus first input
       setTimeout(() => {
@@ -250,14 +251,15 @@ export class RouteDialog {
   }
 
   public close(): void {
-    this.dialog.close();
+    this.panel.classList.remove(styles.panelVisible);
+    this.isVisible = false;
   }
 
   public destroy(): void {
     this.fromSearchBox.unmount();
     this.toSearchBox.unmount();
-    if (this.dialog.parentNode) {
-      this.dialog.parentNode.removeChild(this.dialog);
+    if (this.panel.parentNode) {
+      this.panel.parentNode.removeChild(this.panel);
     }
   }
 
