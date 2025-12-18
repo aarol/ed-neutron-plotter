@@ -1,13 +1,12 @@
 use std::io::{self, Read, Write};
 
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rkyv::rancor::Error;
 use rust_module::{
     fast_json_parser::SystemParser,
     star::Star,
     trie::{CompactRadixTrie, TrieBuilder},
 };
 
-use rust_module::star::{Partition, reorder_for_partitions};
 
 #[allow(dead_code)]
 fn analyze() -> io::Result<()> {
@@ -92,29 +91,18 @@ fn main() -> io::Result<()> {
         trie.insert(name);
     })?;
 
-    let k_splits = 3;
-    let num_partitions = 1 << k_splits;
+    let star_coords: Vec<[f32; 3]> = stars.iter().map(|s| [s.x, s.y, s.z]).collect();
+    let kdtree = kiddo::ImmutableKdTree::new_from_slice(&star_coords);
+    
+    let kdtree_bytes = rkyv::to_bytes::<Error>(&kdtree).unwrap();
+    let mut kdtree_file = std::fs::File::create(out_dir.join("star_kdtree.bin"))?;
+    kdtree_file.write_all(&kdtree_bytes)?;
+    // partitions.par_iter().enumerate().for_each(|(i, p)| {
+    //     let mut file =
+    //         std::fs::File::create(out_dir.join(format!("neutron_stars{}.bin", i))).unwrap();
 
-    reorder_for_partitions(&mut stars, k_splits);
-
-    let chunk_size = stars.len() / num_partitions;
-    let partitions: Vec<Partition> = stars
-        .chunks(chunk_size)
-        .map(|p| Partition::new(p))
-        .collect();
-
-    println!(
-        "Created {} partitions of size approx {}",
-        partitions.len(),
-        chunk_size
-    );
-
-    partitions.par_iter().enumerate().for_each(|(i, p)| {
-        let mut file =
-            std::fs::File::create(out_dir.join(format!("neutron_stars{}.bin", i))).unwrap();
-
-        p.write_to_file(&mut file).unwrap();
-    });
+    //     p.write_to_file(&mut file).unwrap();
+    // });
 
     let (nodes, labels) = trie.build();
     let trie = CompactRadixTrie::new(&nodes, &labels);

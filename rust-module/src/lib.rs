@@ -2,7 +2,9 @@ pub mod fast_json_parser;
 pub mod star;
 pub mod trie;
 pub mod utils;
+pub mod plotter;
 
+use rkyv::rancor::Error;
 use wasm_bindgen::prelude::*;
 
 use crate::{star::Coords, trie::CompactRadixTrie};
@@ -39,7 +41,11 @@ pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
 }
 
 #[wasm_bindgen]
-pub fn find_route(start: JsValue, end: JsValue) -> Vec<JsValue> {
+pub fn find_route(kdtree_bytes: &[u8], start: JsValue, end: JsValue) -> Vec<JsValue> {
+    let kdtree: kiddo::ImmutableKdTree<f32, 3> =
+        rkyv::from_bytes::<kiddo::ImmutableKdTree<f32, 3>, Error>(kdtree_bytes).expect("Valid kdtree");
+    
+    log_u32(kdtree.size() as u32);
 
     let start: Coords = serde_wasm_bindgen::from_value(start).unwrap();
     let end: Coords = serde_wasm_bindgen::from_value(end).unwrap();
@@ -48,6 +54,8 @@ pub fn find_route(start: JsValue, end: JsValue) -> Vec<JsValue> {
         "Finding route from ({}, {}, {}) to ({}, {}, {})",
         start.x, start.y, start.z, end.x, end.y, end.z
     ));
+
+
 
     vec![]
 }

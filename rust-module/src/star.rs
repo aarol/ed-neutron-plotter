@@ -25,6 +25,10 @@ impl Coords {
         writer.write_all(&self.z.to_le_bytes())?;
         Ok(())
     }
+
+    pub fn as_slice(&self) -> [f32;3] {
+        return [self.x, self.y, self.z]
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
