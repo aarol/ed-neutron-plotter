@@ -32,6 +32,7 @@ serde-wasm-bindgen = "0.6.5"
 kiddo = { version = "5.2.3", features =  ["rkyv_08"] }
 rkyv = "0.8.12"
 bitvec = "1.0.1"
+rustc-hash = "2.1.1"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.34"

@@ -1,7 +1,9 @@
 use memchr::memchr;
+use serde::Deserialize;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
-pub struct Coords {
+#[derive(Deserialize, Clone, Copy)]
+pub struct JsonCoords {
     pub x: f64,
     pub y: f64,
     pub z: f64,
@@ -25,7 +27,7 @@ impl<R: Read + Seek> SystemParser<R> {
 
     pub fn for_each<F>(mut self, mut f: F) -> std::io::Result<()>
     where
-        F: FnMut(&str, Coords),
+        F: FnMut(&str, JsonCoords),
     {
         let mut first_line = true;
 
@@ -52,7 +54,7 @@ impl<R: Read + Seek> SystemParser<R> {
         Ok(())
     }
 
-    fn parse_line(buffer: &str) -> Option<(&str, Coords)> {
+    fn parse_line(buffer: &str) -> Option<(&str, JsonCoords)> {
         let line = buffer.trim();
 
         // Skip empty lines and closing bracket
@@ -109,7 +111,7 @@ impl<R: Read + Seek> SystemParser<R> {
             let z_str = unsafe { std::str::from_utf8_unchecked(&bytes[z_start..z_start + z_end]) };
             let z = z_str.parse::<f64>().ok()?;
 
-            Coords { x, y, z }
+            JsonCoords { x, y, z }
         };
 
         Some((name, coords))

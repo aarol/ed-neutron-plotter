@@ -59,8 +59,6 @@ export class Galaxy {
 
     this.focusSphere = this.createFocusSphere()
     this.scene.add(this.focusSphere)
-
-    this.loadStars()
   }
 
   createFocusSphere() {
@@ -111,13 +109,9 @@ export class Galaxy {
     }
   }
 
-  async loadStars() {
+  async loadStars(starPositionArrays: DataView[]) {
     console.log('Loading star data...')
-    const starPositionArrays = await Promise.all([0, 1, 2, 3, 4, 5, 6, 7, 8]
-      .map(i => fetch(`/data/neutron_stars${i}.bin`)
-        .then(res => res.arrayBuffer())
-        .then(arr => new DataView(arr)))
-    )
+    
 
     const count = starPositionArrays.reduce((acc, arr) => acc + arr.byteLength / 12 - 1, 0)
     console.log(`Loaded ${count} stars`)
@@ -135,7 +129,7 @@ export class Galaxy {
       let aabb_max = new Vector3(aabb_max_x, aabb_max_y, aabb_max_z).divideScalar(1000)
 
       console.log(`Star array ${i}: AABB min(${aabb_min_x}, ${aabb_min_y}, ${aabb_min_z}) max(${aabb_max_x}, ${aabb_max_y}, ${aabb_max_z})`)
-      let starArr = new Float32Array(arr.buffer, 3 * 4)
+      let starArr = new Float32Array(arr.buffer)
 
       const geometry = new BufferGeometry()
       geometry.setAttribute('position', new BufferAttribute(starArr, 3))

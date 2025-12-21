@@ -1,13 +1,13 @@
 pub mod fast_json_parser;
-pub mod star;
+pub mod kdtree;
+pub mod plotter;
+pub mod system;
 pub mod trie;
 pub mod utils;
-pub mod plotter;
 
-use rkyv::rancor::Error;
 use wasm_bindgen::prelude::*;
 
-use crate::{star::Coords, trie::CompactRadixTrie};
+use crate::{fast_json_parser::JsonCoords, system::Coords, trie::CompactRadixTrie};
 
 #[wasm_bindgen]
 extern "C" {
@@ -16,6 +16,11 @@ extern "C" {
     fn log(s: &str);
     #[wasm_bindgen(js_namespace = console, js_name = log)]
     fn log_u32(a: u32);
+}
+
+#[wasm_bindgen]
+pub fn init() {
+    utils::set_panic_hook();
 }
 
 #[wasm_bindgen]
@@ -41,21 +46,40 @@ pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
 }
 
 #[wasm_bindgen]
-pub fn find_route(kdtree_bytes: &[u8], start: JsValue, end: JsValue) -> Vec<JsValue> {
-    let kdtree: kiddo::ImmutableKdTree<f32, 3> =
-        rkyv::from_bytes::<kiddo::ImmutableKdTree<f32, 3>, Error>(kdtree_bytes).expect("Valid kdtree");
-    
+pub fn find_route(
+    kdtree_bytes: &[u8],
+    stars: &[f32],
+    start: JsValue,
+    end: JsValue,
+) -> Vec<JsValue> {
+    let kdtree = kdtree::CompactKdTree::from_bytes(kdtree_bytes);
+
     log_u32(kdtree.size() as u32);
 
-    let start: Coords = serde_wasm_bindgen::from_value(start).unwrap();
-    let end: Coords = serde_wasm_bindgen::from_value(end).unwrap();
+    let start: JsonCoords = serde_wasm_bindgen::from_value(start).unwrap();
+    let end: JsonCoords = serde_wasm_bindgen::from_value(end).unwrap();
 
-    log(&format!(
-        "Finding route from ({}, {}, {}) to ({}, {}, {})",
-        start.x, start.y, start.z, end.x, end.y, end.z
-    ));
+    let start = Coords::from(&start);
+    let end = Coords::from(&end);
 
+    log(&format!("Finding route from ({}) to ({})", start, end));
 
+    let ship = plotter::Ship {
+        fuel_tank_size: 32.0,
+        jump_range: 80.0,
+        max_fuel_per_jump: 4.0,
+        base_mass: 100.0,
+        fsd_optimized_mass: 50.0,
+        fsd_boost_factor: 1.2,
+        fsd_rating_val: 5.0,
+        fsd_class_val: 3.0,
+    };
 
-    vec![]
+    let stars = stars.windows(3).map(Coords::from_slice).collect::<Vec<_>>();
+
+    plotter::plot(start, end, &stars, &ship, kdtree)
+        .iter()
+        .map(|pos| format!("{:?}", pos))
+        .map(|s| JsValue::from_str(s.as_str()))
+        .collect()
 }
