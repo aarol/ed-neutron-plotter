@@ -87,7 +87,7 @@ fn main() -> io::Result<()> {
     //     trie.insert(name);
     // })?;
 
-    let star_coords: Vec<[f32; 3]> = stars.iter().map(|s| s.0).collect();
+    let star_coords: Vec<[f32; 3]> = stars.iter().map(|s| s.to_slice()).collect();
     let kdtree_indices = kdtree::KdTreeBuilder::from_points(star_coords).build();
 
     let kdtree = kdtree::CompactKdTree::new(&kdtree_indices);

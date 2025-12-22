@@ -1,10 +1,10 @@
 use core::panic;
-use std::time::Duration;
 
 use bitvec::prelude::*;
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
-use crate::{kdtree::CompactKdTree, system::Coords};
+use crate::{kdtree::CompactKdTree, log_u32, ordered_f32::OrderedF32, system::Coords};
 
 pub struct Ship {
     pub fuel_tank_size: f32,
@@ -42,12 +42,20 @@ impl Ship {
     // }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Report {
+    curr_best_route: Vec<Coords>,
+    distance: f32,
+    depth: u32,
+}
+
 pub fn plot(
     start_coords: Coords,
     end_coords: Coords,
     stars: &[Coords],
     ship: &Ship,
     kdtree: CompactKdTree,
+    send_report: impl Fn(Report),
 ) -> Vec<Coords> {
     // Fuel, system index
     let mut queue: Vec<(f32, u32)> = Vec::with_capacity(1024);
@@ -79,14 +87,15 @@ pub fn plot(
     let mut depth = 0;
     let mut dist_to_end = start_coords.dist(&end_coords);
     let mut end_found = false;
-    let mut curr_time = std::time::Instant::now();
+    // let mut curr_time = std::time::Instant::now();
     loop {
         if end_found || queue.is_empty() {
             break;
         }
 
-        if curr_time.elapsed() > Duration::from_secs(1) {
-            curr_time = std::time::Instant::now();
+        // if curr_time.elapsed() > Duration::from_secs(1) {
+        if depth % 5 == 0 {
+            // curr_time = std::time::Instant::now();
             println!(
                 "Depth {}: queue size {}, dist to end {:.2}, range {:.2}",
                 depth,
@@ -94,15 +103,29 @@ pub fn plot(
                 dist_to_end,
                 range
             );
+            if let Some((_, closest_star)) = queue
+                .iter()
+                .max_by_key(|(_, i)| OrderedF32(heuristic(range, *i)))
+            {
+                let best_route = reconstruct_path(&prev, *closest_star, stars);
+
+                send_report(Report {
+                    curr_best_route: best_route,
+                    distance: stars[*closest_star as usize].dist(&end_coords),
+                    depth,
+                });
+            }
         }
 
         let working_queue = std::mem::take(&mut queue);
+        log_u32(working_queue.len() as u32);
         for (fuel_available, i) in working_queue {
             // let mut range = ship.jump_range(*fuel_available, 4.0);
             let coords = stars[i as usize];
 
-            let neighbours = kdtree.nearest_n_within(coords, stars, range, beam_width);
 
+            let neighbours = kdtree.nearest_n_within(coords, stars, range, beam_width);
+            log_u32(neighbours.len() as u32);
             let mut buffer = vec![];
 
             for (ni, _dist_sq) in neighbours {
@@ -136,33 +159,33 @@ pub fn plot(
         if !queue.is_empty() {
             let count = beam_width.min(queue.len() - 1);
 
-            queue.select_nth_unstable_by(count, |a, b| {
-                heuristic(range, a.1).total_cmp(&heuristic(range, b.1))
-            });
+            queue.select_nth_unstable_by_key(count, |(_, i)| OrderedF32(heuristic(range, *i)));
             queue.truncate(count);
         }
         seen |= &seen_update;
     }
 
     if end_found {
-      reconstruct_path(&prev, end_idx, stars)
+        reconstruct_path(&prev, end_idx, stars)
     } else {
-      panic!("No route found")
+        panic!("No route found")
     }
-
 }
 
 fn reconstruct_path(prev: &FxHashMap<u32, u32>, end_idx: u32, stars: &[Coords]) -> Vec<Coords> {
     let mut path = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut current = end_idx;
-    
+
     path.push(stars[current as usize]);
     seen.insert(current);
 
     while let Some(&p) = prev.get(&current) {
         if seen.contains(&p) {
-            panic!("Loop detected in path reconstruction: {} already visited", p);
+            panic!(
+                "Loop detected in path reconstruction: {} already visited",
+                p
+            );
         }
         seen.insert(p);
         path.push(stars[p as usize]);
@@ -195,8 +218,8 @@ mod tests {
 
         let kdtree = CompactKdTree::from_bytes(&kdtree_bin);
 
-        let start = Coords([25.044375, 0.29353125, 20.47203125]);
-        let end = Coords([9.5305, -0.91028124, 19.808125]);
+        let start = Coords::new(25.044375, 0.29353125, 20.47203125);
+        let end = Coords::new(9.5305, -0.91028124, 19.808125);
 
         let route = plot(
             start,
@@ -213,6 +236,7 @@ mod tests {
                 fsd_class_val: 3.0,
             },
             kdtree,
+            |_report| {},
         );
 
         println!("Route length: {}", route.len());

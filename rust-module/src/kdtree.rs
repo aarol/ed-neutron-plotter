@@ -231,7 +231,7 @@ impl<'a> CompactKdTree<'a> {
         }
 
         let axis = depth % 3;
-        let diff = query.0[axis] - point.0[axis];
+        let diff = query.at(axis) - point.at(axis);
         let diff_sq = diff * diff;
 
         let (first, second) = if diff < 0.0 {
@@ -296,7 +296,7 @@ impl<'a> CompactKdTree<'a> {
         }
 
         let axis = depth % 3;
-        let diff = query.0[axis] - point.0[axis];
+        let diff = query.at(axis) - point.at(axis);
         let diff_sq = diff * diff;
 
         let left_child = 2 * tree_idx + 1;
@@ -356,7 +356,7 @@ impl<'a> CompactKdTree<'a> {
         }
 
         let axis = depth % 3;
-        let diff = query.0[axis] - point.0[axis];
+        let diff = query.at(axis) - point.at(axis);
         let diff_sq = diff * diff;
 
         let left_child = 2 * tree_idx + 1;

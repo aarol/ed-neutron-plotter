@@ -41,7 +41,10 @@ async function main() {
         route_kdtree = await fetch("data/star_kdtree.bin").then(r => r.arrayBuffer())
       }
 
-      const res = wasm.find_route(new Uint8Array(route_kdtree!), starPosData!, routeConfig.from.coords, routeConfig.to.coords)
+      const res = wasm.find_route(new Uint8Array(route_kdtree!), starPosData!, routeConfig.from.coords, routeConfig.to.coords,
+        (report: any) => {
+          console.log(report);
+        })
       console.log(res)
     }
   };

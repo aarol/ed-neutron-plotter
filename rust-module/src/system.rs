@@ -4,6 +4,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::{convert::WasmAbi, prelude::wasm_bindgen};
 
 use crate::fast_json_parser::JsonCoords;
 
@@ -16,9 +17,10 @@ pub struct System {
     // date: String,
 }
 
+#[wasm_bindgen]
 #[repr(transparent)]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub struct Coords(pub [f32; 3]);
+pub struct Coords([f32; 3]);
 
 impl Coords {
     pub fn new(x: f32, y: f32, z: f32) -> Self {
@@ -27,14 +29,11 @@ impl Coords {
     pub fn from_slice(slice: &[f32]) -> Self {
         Coords([slice[0], slice[1], slice[2]])
     }
-    pub fn x(&self) -> f32 {
-        self.0[0]
+    pub fn to_slice(&self) -> [f32; 3] {
+        self.0
     }
-    pub fn y(&self) -> f32 {
-        self.0[1]
-    }
-    pub fn z(&self) -> f32 {
-        self.0[2]
+    pub fn at(&self, index: usize) -> f32 {
+        self.0[index]
     }
     pub fn write_to_file<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         writer.write_all(&self.0[0].to_le_bytes())?;
@@ -48,6 +47,40 @@ impl Coords {
         let dy = self.y() - o.y();
         let dz = self.z() - o.z();
         (dx * dx + dy * dy + dz * dz).sqrt()
+    }
+}
+
+#[wasm_bindgen]
+impl Coords {
+    #[wasm_bindgen(getter)]
+    pub fn x(&self) -> f32 {
+        self.0[0]
+    }
+    #[wasm_bindgen(getter)]
+    pub fn y(&self) -> f32 {
+        self.0[1]
+    }
+    #[wasm_bindgen(getter)]
+    pub fn z(&self) -> f32 {
+        self.0[2]
+    }
+}
+
+impl WasmAbi for Coords {
+    type Prim1 = f32;
+    type Prim2 = f32;
+    type Prim3 = f32;
+    type Prim4 = ();
+    fn split(self) -> (Self::Prim1, Self::Prim2, Self::Prim3, Self::Prim4) {
+        (self.0[0], self.0[1], self.0[2], ())
+    }
+    fn join(
+        prim1: Self::Prim1,
+        prim2: Self::Prim2,
+        prim3: Self::Prim3,
+        _prim4: Self::Prim4,
+    ) -> Self {
+        Coords([prim1, prim2, prim3])
     }
 }
 

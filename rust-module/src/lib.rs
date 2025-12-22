@@ -4,6 +4,7 @@ pub mod plotter;
 pub mod system;
 pub mod trie;
 pub mod utils;
+mod ordered_f32;
 
 use wasm_bindgen::prelude::*;
 
@@ -45,13 +46,16 @@ pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
     JsValue::from_bool(trie.contains(prefix))
 }
 
+
+
 #[wasm_bindgen]
 pub fn find_route(
     kdtree_bytes: &[u8],
     stars: &[f32],
     start: JsValue,
     end: JsValue,
-) -> Vec<JsValue> {
+    report_callback: &js_sys::Function,
+) -> Vec<Coords> {
     let kdtree = kdtree::CompactKdTree::from_bytes(kdtree_bytes);
 
     log_u32(kdtree.size() as u32);
@@ -77,9 +81,10 @@ pub fn find_route(
 
     let stars = stars.windows(3).map(Coords::from_slice).collect::<Vec<_>>();
 
-    plotter::plot(start, end, &stars, &ship, kdtree)
-        .iter()
-        .map(|pos| format!("{:?}", pos))
-        .map(|s| JsValue::from_str(s.as_str()))
-        .collect()
+    let cb = |report: plotter::Report| {
+        let report = serde_wasm_bindgen::to_value(&report).unwrap();
+        let _ = report_callback.call1(&JsValue::NULL, &report);
+    };
+
+    plotter::plot(start, end, &stars, &ship, kdtree, cb)
 }

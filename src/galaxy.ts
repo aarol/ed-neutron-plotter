@@ -1,5 +1,4 @@
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
-import { Inspector } from 'three/examples/jsm/inspector/Inspector.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import { color, cos, float, Fn, instancedArray, instancedBufferAttribute, sin, uniform, vec4 } from 'three/tsl';
 import { AdditiveBlending, Box3, Box3Helper, BoxHelper, BufferAttribute, BufferGeometry, CubeTextureLoader, InstancedMesh, Mesh, PerspectiveCamera, PlaneGeometry, Points, PointsNodeMaterial, Scene, Sphere, SphereGeometry, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
