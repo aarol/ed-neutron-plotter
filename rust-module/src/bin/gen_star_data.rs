@@ -1,7 +1,8 @@
 use std::io::{self, Read, Write};
 
+use rayon::slice::ParallelSliceMut;
 use rust_module::{
-    fast_json_parser::SystemParser, kdtree, system::Coords, trie::{CompactRadixTrie, TrieBuilder}
+    fast_json_parser::SystemParser, kdtree, system::Coords, trie::LoudsTrie
 };
 
 #[allow(dead_code)]
@@ -10,11 +11,11 @@ fn analyze() -> io::Result<()> {
 
     let mut buf = vec![];
     file.read_to_end(&mut buf)?;
-    let trie = CompactRadixTrie::from_bytes(&buf);
-    println!("Trie has {} nodes", trie.nodes.len());
+    let trie = LoudsTrie::from(buf.as_ref());
+    // println!("Trie has {} nodes", trie());
 
     // Test contains
-    println!("\nContains 'Colonia': {}", trie.contains("Colonia"));
+    println!("\nContains 'Colonia': {}", trie.find("Colonia").is_some());
 
     // Test suggest with different prefixes
     println!("\nSuggestions for 'Col':");
@@ -32,12 +33,14 @@ fn analyze() -> io::Result<()> {
         println!("  - {}", suggestion);
     }
 
+    trie.analyze_structure();
+
     Ok(())
 }
 
 fn main() -> io::Result<()> {
     // Uncomment to analyze existing trie:
-    // return analyze();
+    return analyze();
 
     let out_dir = std::path::Path::new("../public/data");
     std::fs::create_dir_all(out_dir)?;
@@ -46,15 +49,15 @@ fn main() -> io::Result<()> {
 
     // let systems = std::fs::File::open("systems_1day.json")?;
 
+    let mut coords = vec![];
     let mut stars = vec![];
-    let mut trie = TrieBuilder::new();
 
     let parser = SystemParser::new(neutrons)?;
 
     // let parser2 = SystemParser::new(systems)?;
 
     let mut count = 0;
-    parser.for_each(|name, coords| {
+    parser.for_each(|name, coord| {
         if count % 100000 == 0 {
             println!("Processing line {}", count);
         }
@@ -62,13 +65,13 @@ fn main() -> io::Result<()> {
 
         // The coordinates are in light years, three.js doesn't like such huge distances
         // This will reduce the scale to max [-100, 100] in each axis
-        stars.push(Coords::new(
-            -(coords.x / 1000.0) as f32,
-            (coords.y / 1000.0) as f32,
-            (coords.z / 1000.0) as f32,
+        coords.push(Coords::new(
+            -(coord.x / 1000.0) as f32,
+            (coord.y / 1000.0) as f32,
+            (coord.z / 1000.0) as f32,
         ));
 
-        trie.insert(name);
+        stars.push(name.to_owned());
     })?;
 
     // parser2.for_each(|name, _coords| {
@@ -87,7 +90,7 @@ fn main() -> io::Result<()> {
     //     trie.insert(name);
     // })?;
 
-    let star_coords: Vec<[f32; 3]> = stars.iter().map(|s| s.to_slice()).collect();
+    let star_coords: Vec<[f32; 3]> = coords.iter().map(|s| s.to_slice()).collect();
     let kdtree_indices = kdtree::KdTreeBuilder::from_points(star_coords).build();
 
     let kdtree = kdtree::CompactKdTree::new(&kdtree_indices);
@@ -99,8 +102,8 @@ fn main() -> io::Result<()> {
 
     let bytes = unsafe {
         std::slice::from_raw_parts(
-            stars.as_ptr() as *const u8,
-            stars.len() * std::mem::size_of::<Coords>(),
+            coords.as_ptr() as *const u8,
+            coords.len() * std::mem::size_of::<Coords>(),
         )
     };
     stars_file.write_all(bytes)?;
@@ -111,18 +114,23 @@ fn main() -> io::Result<()> {
     //     p.write_to_file(&mut file).unwrap();
     // });
 
-    let (nodes, labels) = trie.build();
-    let trie = CompactRadixTrie::new(&nodes, &labels);
+    println!("Sorting star data");
+    stars.par_sort_unstable();
+    let trie= LoudsTrie::new(&stars.iter().map(String::as_str).collect::<Vec<&str>>());
 
-    dbg!(trie.suggest("Speam", 10));
 
-    trie.analyze_stats();
-    println!("Uses {:.1} MB of space", trie.size_in_bytes() as f64 / 1024.0 / 1024.0);
+    for star in trie.suggest("Speam", 10) {
+        println!("  - {}: {:?}", star, trie.find(&star));
+    }
+
+    println!("\nTrie has {} nodes", trie.node_count());
+
+    println!("Uses {:.1} MB of space", trie.size_on_disk() as f64 / 1024.0 / 1024.0);
 
     // Write trie to file
     let mut trie_file = std::fs::File::create(out_dir.join("search_trie.bin"))?;
-
-    trie_file.write_all(&trie.to_bytes())?;
+    let trie_bytes: Vec<u8> = trie.into();
+    trie_file.write_all(&trie_bytes)?;
 
     Ok(())
 }

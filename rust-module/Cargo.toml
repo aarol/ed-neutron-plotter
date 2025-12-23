@@ -34,6 +34,7 @@ rkyv = "0.8.12"
 bitvec = "1.0.1"
 rustc-hash = "2.1.1"
 js-sys = "0.3.83"
+succinct = "0.5.2"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.34"

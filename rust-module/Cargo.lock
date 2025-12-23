@@ -607,6 +607,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_derive",
  "simd-json",
+ "succinct",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]
@@ -738,6 +739,16 @@ name = "sorted-vec"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f58d7b0190c7f12df7e8be6b79767a0836059159811b869d5ab55721fe14d0"
+
+[[package]]
+name = "succinct"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7798b62081a999bcf090b2f220fee8845dd1c6ffeb17e1bc6ca783825f62a418"
+dependencies = [
+ "byteorder",
+ "num-traits",
+]
 
 [[package]]
 name = "syn"
