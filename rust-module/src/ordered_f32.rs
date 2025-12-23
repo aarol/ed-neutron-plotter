@@ -11,7 +11,7 @@ impl Eq for OrderedF32 {}
 
 impl PartialOrd for OrderedF32 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
     }
 }
 

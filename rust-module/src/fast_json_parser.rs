@@ -57,11 +57,7 @@ impl<R: Read + Seek> SystemParser<R> {
         }
 
         // Remove trailing comma if present
-        let line = if line.ends_with(',') {
-            &line[..line.len() - 1]
-        } else {
-            line
-        };
+        let line = line.trim_end_matches(',');
 
         let bytes = line.as_bytes();
 

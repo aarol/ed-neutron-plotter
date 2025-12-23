@@ -55,7 +55,7 @@ impl<'a> KdTreeBuilder<'a> {
         let mut tree = vec![INVALID_IDX; tree_size.max(n)];
         let mut indices: Vec<u32> = (0..n as u32).collect();
 
-        Self::build_recursive(&self.points, &mut indices, &mut tree, 0, 0);
+        Self::build_recursive(self.points, &mut indices, &mut tree, 0, 0);
 
         tree
     }

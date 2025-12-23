@@ -23,9 +23,9 @@ impl Ship {
         let fuel_used = self.max_fuel_per_jump.min(fuel) * overcharge_mult;
         let opt_mass = self.fsd_optimized_mass * self.fsd_boost_factor;
 
-        return opt_mass
+        opt_mass
             * ((1000. * fuel_used) / self.fsd_rating_val).powf(1. / self.fsd_class_val)
-            / mass;
+            / mass
     }
 
     // fn fuel_cost_for_jump(
@@ -129,7 +129,7 @@ pub fn plot(
             let mut buffer = vec![];
 
             for (ni, _dist_sq) in neighbours {
-                if !seen.get(ni as usize).map_or(false, |b| *b) {
+                if !seen.get(ni as usize).is_some_and(|b| *b) {
                     seen.set(ni as usize, true);
 
                     buffer.push((i, ni));
@@ -137,7 +137,7 @@ pub fn plot(
             }
 
             for (parent_i, child_i) in buffer {
-                if !seen_update.get(child_i as usize).map_or(false, |b| *b) {
+                if !seen_update.get(child_i as usize).is_some_and(|b| *b) {
                     seen_update.set(child_i as usize, true);
 
                     prev.insert(child_i, parent_i);

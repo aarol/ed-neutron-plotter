@@ -191,8 +191,6 @@ impl LoudsTrie {
         )
     }
 
-    /// 2. NAVIGATION (The "Magic" Math)
-
     // Returns the bit-index of the first child of the node at `index`.
     // Formula: select0(rank1(index) - 1) + 1
     fn first_child(&self, index: u64) -> Option<u64> {
@@ -303,10 +301,7 @@ impl LoudsTrie {
         // 2. Traverse down
         while !key_bytes.is_empty() {
             // Get the starting bit-index where the children of `curr_node_idx` are stored.
-            let mut scan_idx = match self.first_child(curr_node_idx) {
-                Some(idx) => idx,
-                None => return None, // We have chars left, but node is a leaf
-            };
+            let mut scan_idx = self.first_child(curr_node_idx)?; // No children → key not found
 
             let mut found = false;
 
@@ -572,7 +567,7 @@ impl From<&[u8]> for LoudsTrie {
             offset += 8;
         }
         let mut bits = BitVector::block_with_capacity(bits_len);
-        for (_i, &block) in bits_u64s.iter().enumerate() {
+        for &block in bits_u64s.iter() {
             bits.push_block(block);
         }
 
@@ -587,7 +582,7 @@ impl From<&[u8]> for LoudsTrie {
             offset += 8;
         }
         let mut terminals = BitVector::block_with_capacity(terminals_len);
-        for (_i, &block) in terminals_u64s.iter().enumerate() {
+        for &block in terminals_u64s.iter() {
             terminals.push_block(block);
         }
 
@@ -601,7 +596,7 @@ impl From<&[u8]> for LoudsTrie {
             offset += 8;
         }
         let mut label_type = BitVector::block_with_capacity(lt_len);
-        for (_i, &block) in lt_u64s.iter().enumerate() {
+        for &block in lt_u64s.iter() {
             label_type.push_block(block);
         }
 
@@ -680,7 +675,7 @@ impl LoudsTrie {
             let original_idx = complex_indices[i];
             assert!(offset < (1 << 25), "Label store too large");
             assert!(len < 128, "Label too long");
-            self.complex_labels[original_idx] = (offset << 7) | (len as u32);
+            self.complex_labels[original_idx] = (offset << 7) | len;
         }
     }
 }

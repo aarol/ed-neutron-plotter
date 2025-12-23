@@ -70,9 +70,9 @@ fn main() -> io::Result<()> {
         // The coordinates are in light years, three.js doesn't like such huge distances
         // This will reduce the scale to max [-100, 100] in each axis
         coords.push(Coords::new(
-            -(coord.x() / 1000.0) as f32,
-            (coord.y() / 1000.0) as f32,
-            (coord.z() / 1000.0) as f32,
+            -(coord.x() / 1000.0),
+            coord.y() / 1000.0,
+            coord.z() / 1000.0,
         ));
 
         star_names.push(name.to_owned());
