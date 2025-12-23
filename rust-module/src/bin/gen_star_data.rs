@@ -94,31 +94,33 @@ fn main() -> io::Result<()> {
     //     trie.insert(name);
     // })?;
 
-    let mut sorted_star_names = star_names.clone();
+    // Create (name, original_index) pairs and sort by name
+    // so that we can remap star coordinates from original order to trie order
+    // this way, the trie does not need to store the coordinate indices explicitly
+    let mut indexed_names: Vec<(usize, String)> = star_names
+        .into_iter()
+        .enumerate()
+        .collect();
+    
     println!("Sorting star names..");
-    sorted_star_names.par_sort_unstable();
-    let trie = LoudsTrie::new(&sorted_star_names.iter().map(String::as_str).collect::<Vec<&str>>());
+    indexed_names.par_sort_unstable_by(|a, b| a.1.cmp(&b.1));
+    
+    let str_keys: Vec<&str> = indexed_names.iter().map(|(_, name)| name.as_str()).collect();
+    let (trie, coords_indices) = LoudsTrie::new(&str_keys);
 
     let star_coords: Vec<[f32; 3]> = coords.iter().map(|s| s.to_slice()).collect();
 
-    // for every star, put the coord corresponding to its name in the right place in the star coords array
-    // TODO! find a better way to do this
+    // Map from trie order to original coord order
+    // coords_indices[sorted_idx] = trie_terminal_index
+    // indexed_names[sorted_idx].0 = original_index
     println!("Reassigning star coords according to trie..");
     let mut sorted_coords = vec![[0.0; 3]; star_coords.len()];
-    for (i, (name, coord)) in star_names.iter().zip(coords).enumerate() {
-        let star_idx = trie.find(name).expect("Always in the trie");
-        sorted_coords[star_idx as usize] = coord.to_slice();
-        if i % 100000 == 0 {
-            println!("Reassigning star {}", i);
-        }
+    for (sorted_idx, &trie_idx) in coords_indices.iter().enumerate() {
+        let original_idx = indexed_names[sorted_idx].0;
+        sorted_coords[trie_idx] = star_coords[original_idx];
     }
 
     let kdtree_indices = kdtree::KdTreeBuilder::from_points(&sorted_coords).build();
-    let jacksons_id = trie.find("Jackson's Lighthouse").unwrap();
-    println!(
-        "Jackson's Lighthouse is at index {}, coords: {:?}",
-        jacksons_id, sorted_coords[jacksons_id as usize]
-    );
     let kdtree = kdtree::CompactKdTree::new(&kdtree_indices);
 
     let mut kdtree_file = std::fs::File::create(out_dir.join("star_kdtree.bin"))?;

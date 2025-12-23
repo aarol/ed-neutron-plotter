@@ -6,6 +6,15 @@ use succinct::{
     select::Select0Support,
 };
 
+/// A LOUDS (Level-Order Unary Degree Sequence) Trie implementation with radix compression
+/// The child-parent hierarchy is encoded in a bit-vector for minimal space usage.
+///
+/// The rank/select structures are computed at load-time and are not stored on disk.
+///
+/// The labels on the edges are stored separately, with 1-byte labels in a simple array
+/// and longer labels stored as (u32) offsets/lengths into a label store.
+///
+/// Currently, the largest space bottleneck is the
 pub struct LoudsTrie {
     bits: succinct::BitVector<u64>,
     bits_select: succinct::select::BinSearchSelect<JacobsonRank<BitVector<u64>>>,
@@ -22,7 +31,8 @@ pub struct LoudsTrie {
 
 impl LoudsTrie {
     /// Builds a LOUDS trie from a sorted list of strings.
-    pub fn new(keys: &[&str]) -> Self {
+    /// Returns the trie and a mapping from input indices to trie IDs.
+    pub fn new(keys: &[&str]) -> (Self, Vec<usize>) {
         assert!(!keys.is_empty());
         assert!(
             keys.windows(2).all(|w| w[0] <= w[1]),
@@ -32,12 +42,13 @@ impl LoudsTrie {
         // 1. Build standard Trie in memory first
         #[derive(Default)]
         struct TempNode {
+            id: Option<usize>,
             children: Vec<(u8, TempNode)>, // Ordered children
             is_terminal: bool,
         }
 
         let mut root = TempNode::default();
-        for key in keys {
+        for (id, key) in keys.iter().enumerate() {
             let mut node = &mut root;
             for byte in key.bytes() {
                 // Find or insert child
@@ -48,11 +59,13 @@ impl LoudsTrie {
                     node = &mut node.children.last_mut().unwrap().1;
                 }
             }
+            node.id = Some(id);
             node.is_terminal = true;
         }
 
         // 2. Compress into Radix Trie
         struct CompressedNode {
+            id: Option<usize>,
             children: Vec<(Vec<u8>, CompressedNode)>,
             is_terminal: bool,
         }
@@ -76,6 +89,7 @@ impl LoudsTrie {
                 new_children.push((label, c_child));
             }
             CompressedNode {
+                id: node.id,
                 children: new_children,
                 is_terminal: node.is_terminal,
             }
@@ -90,12 +104,15 @@ impl LoudsTrie {
         let mut temp_label_store = Vec::new();
         let mut queue = VecDeque::new();
 
+        let mut coords_indices = vec![0; keys.len()];
+
         // Push fake super-root to start the sequence "10" for the actual root
         bits.push_bit(true);
         bits.push_bit(false);
 
         queue.push_back(&root_compressed);
         terminals.push_bit(root_compressed.is_terminal);
+        let mut curr_terminal_index = 1;
 
         while let Some(node) = queue.pop_front() {
             for (label, child) in &node.children {
@@ -113,6 +130,12 @@ impl LoudsTrie {
                 temp_node_labels.push(packed);
 
                 terminals.push_bit(child.is_terminal);
+                if let Some(id) = child.id {
+                    coords_indices[id] = curr_terminal_index;
+                }
+                if child.is_terminal {
+                    curr_terminal_index += 1;
+                }
 
                 queue.push_back(child);
             }
@@ -152,17 +175,20 @@ impl LoudsTrie {
         let label_type_rank = JacobsonRank::new(label_type.clone());
         let terminals_rank = JacobsonRank::new(terminals.clone());
 
-        Self {
-            bits,
-            terminals,
-            bits_select: select,
-            label_type,
-            label_type_rank,
-            simple_labels,
-            complex_labels,
-            label_store: new_store,
-            terminals_rank,
-        }
+        (
+            Self {
+                bits,
+                terminals,
+                bits_select: select,
+                label_type,
+                label_type_rank,
+                simple_labels,
+                complex_labels,
+                label_store: new_store,
+                terminals_rank,
+            },
+            coords_indices,
+        )
     }
 
     /// 2. NAVIGATION (The "Magic" Math)
@@ -1004,7 +1030,7 @@ mod tests {
     fn test_louds_trie() {
         let mut words: Vec<&str> = vec!["A", "B"];
         words.sort();
-        let trie = LoudsTrie::new(&words);
+        let (trie, _) = LoudsTrie::new(&words);
 
         assert!(trie.find("A").is_some());
         assert!(trie.find("B").is_some());
@@ -1016,7 +1042,7 @@ mod tests {
     fn test_suggest_basic() {
         let mut words: Vec<&str> = vec!["apple", "application", "apply", "banana", "band"];
         words.sort();
-        let trie = LoudsTrie::new(&words);
+        let (trie, _) = LoudsTrie::new(&words);
 
         let suggestions = trie.suggest("app", 10);
         assert_eq!(suggestions.len(), 3);
@@ -1034,7 +1060,7 @@ mod tests {
     fn test_suggest_case_insensitive() {
         let mut words: Vec<&str> = vec!["Apple", "APPLICATION", "Apply", "Banana"];
         words.sort();
-        let trie = LoudsTrie::new(&words);
+        let (trie, _) = LoudsTrie::new(&words);
 
         // Search with lowercase should find uppercase entries
         let suggestions = trie.suggest("app", 10);
@@ -1056,7 +1082,7 @@ mod tests {
     fn test_suggest_limit() {
         let mut words: Vec<&str> = vec!["a1", "a2", "a3", "a4", "a5"];
         words.sort();
-        let trie = LoudsTrie::new(&words);
+        let (trie, _) = LoudsTrie::new(&words);
 
         let suggestions = trie.suggest("a", 3);
         assert_eq!(suggestions.len(), 3);
@@ -1069,7 +1095,7 @@ mod tests {
     fn test_suggest_no_match() {
         let mut words: Vec<&str> = vec!["apple", "banana"];
         words.sort();
-        let trie = LoudsTrie::new(&words);
+        let (trie, _) = LoudsTrie::new(&words);
 
         let suggestions = trie.suggest("xyz", 10);
         assert!(suggestions.is_empty());
@@ -1082,7 +1108,7 @@ mod tests {
     fn test_suggest_empty_prefix() {
         let mut words: Vec<&str> = vec!["apple", "banana"];
         words.sort();
-        let trie = LoudsTrie::new(&words);
+        let (trie, _) = LoudsTrie::new(&words);
 
         // Empty prefix should return all words (up to limit)
         // Note: Empty prefix starts from root which might include root itself
@@ -1099,7 +1125,7 @@ mod tests {
     fn test_suggest_exact_match() {
         let mut words: Vec<&str> = vec!["app", "apple", "application"];
         words.sort();
-        let trie = LoudsTrie::new(&words);
+        let (trie, _) = LoudsTrie::new(&words);
 
         // "app" is both a valid word and a prefix
         let suggestions = trie.suggest("app", 10);

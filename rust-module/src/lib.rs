@@ -39,6 +39,9 @@ impl Searcher {
     pub fn get_coords_for_star(&self, star_name: &str) -> Option<Coords> {
         self.trie.find(star_name).map(|index| {
             let coords = self.stars[index as usize];
+            log(format!("{:?}", self.stars[index as usize - 1]).as_str());
+            log(format!("{:?}", self.stars[index as usize]).as_str());
+            log(format!("{:?}", self.stars[index as usize + 1]).as_str());
             coords
         })
     }
