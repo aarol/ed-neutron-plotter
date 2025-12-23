@@ -1,9 +1,7 @@
 use std::io::{self, Read, Write};
 
 use rayon::slice::ParallelSliceMut;
-use rust_module::{
-    fast_json_parser::SystemParser, kdtree, system::Coords, trie::LoudsTrie
-};
+use rust_module::{fast_json_parser::SystemParser, kdtree, system::Coords, trie::LoudsTrie};
 
 #[allow(dead_code)]
 fn analyze() -> io::Result<()> {
@@ -33,14 +31,20 @@ fn analyze() -> io::Result<()> {
         println!("  - {}", suggestion);
     }
 
+    println!("\nSuggestions for 'Jackson:");
+    for suggestion in trie.suggest("Jackson", 10) {
+        println!("  - {}", suggestion);
+    }
+
     trie.analyze_structure();
 
     Ok(())
 }
 
 fn main() -> io::Result<()> {
-    // Uncomment to analyze existing trie:
-    return analyze();
+    if std::env::args().any(|arg| arg.contains("analyze")) {
+      return analyze();
+    }
 
     let out_dir = std::path::Path::new("../public/data");
     std::fs::create_dir_all(out_dir)?;
@@ -80,12 +84,12 @@ fn main() -> io::Result<()> {
     //     }
     //     count += 1;
 
-        // Don't show these yet
-        // stars.push(Star::new(
-        //     (coords.x / 1000.0) as f32,
-        //     (coords.y / 1000.0) as f32,
-        //     (coords.z / 1000.0) as f32,
-        // ));
+    // Don't show these yet
+    // stars.push(Star::new(
+    //     (coords.x / 1000.0) as f32,
+    //     (coords.y / 1000.0) as f32,
+    //     (coords.z / 1000.0) as f32,
+    // ));
 
     //     trie.insert(name);
     // })?;
@@ -116,8 +120,7 @@ fn main() -> io::Result<()> {
 
     println!("Sorting star data");
     stars.par_sort_unstable();
-    let trie= LoudsTrie::new(&stars.iter().map(String::as_str).collect::<Vec<&str>>());
-
+    let trie = LoudsTrie::new(&stars.iter().map(String::as_str).collect::<Vec<&str>>());
 
     for star in trie.suggest("Speam", 10) {
         println!("  - {}: {:?}", star, trie.find(&star));
@@ -125,7 +128,10 @@ fn main() -> io::Result<()> {
 
     println!("\nTrie has {} nodes", trie.node_count());
 
-    println!("Uses {:.1} MB of space", trie.size_on_disk() as f64 / 1024.0 / 1024.0);
+    println!(
+        "Uses {:.1} MB of space",
+        trie.size_on_disk() as f64 / 1024.0 / 1024.0
+    );
 
     // Write trie to file
     let mut trie_file = std::fs::File::create(out_dir.join("search_trie.bin"))?;

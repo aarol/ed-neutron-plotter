@@ -9,7 +9,7 @@ mod louds_trie;
 
 use wasm_bindgen::prelude::*;
 
-use crate::{fast_json_parser::JsonCoords, system::Coords};
+use crate::{fast_json_parser::JsonCoords, system::Coords, trie::LoudsTrie};
 
 #[wasm_bindgen]
 extern "C" {
@@ -30,24 +30,22 @@ pub fn greet() {
     alert("Hello, rust-module!");
 }
 
-// #[wasm_bindgen]
-// pub fn suggest_words(trie: &[u8], prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
-//     let trie = CompactRadixTrie::from_bytes(trie);
+#[wasm_bindgen]
+pub fn suggest_words(trie: &[u8], prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
+    let trie = LoudsTrie::from(trie);
 
-//     trie.suggest(prefix, num_suggestions)
-//         .into_iter()
-//         .map(|s| JsValue::from_str(s.as_str()))
-//         .collect()
-// }
+    trie.suggest(prefix, num_suggestions)
+        .into_iter()
+        .map(|s| JsValue::from_str(s.as_str()))
+        .collect()
+}
 
-// #[wasm_bindgen]
-// pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
-//     let trie = CompactRadixTrie::from_bytes(trie);
+#[wasm_bindgen]
+pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
+    let trie = LoudsTrie::from(trie);
 
-//     JsValue::from_bool(trie.contains(prefix))
-// }
-
-
+    JsValue::from_bool(trie.find(prefix).is_some())
+}
 
 #[wasm_bindgen]
 pub fn find_route(
