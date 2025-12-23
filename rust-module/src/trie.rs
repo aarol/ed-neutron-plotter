@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
+use std::mem::size_of;
 
 use succinct::{
-    BinSearchSelect, BitRankSupport, BitVec, BitVecMut, BitVecPush, BitVector, JacobsonRank,
+    BinSearchSelect, BitRankSupport, BitVec, BitVecPush, BitVector, JacobsonRank,
     Select1Support, select::Select0Support,
 };
 
@@ -9,7 +10,8 @@ pub struct LoudsTrie {
     bits: succinct::BitVector<u64>,
     terminals: succinct::BitVector<u64>,
     select: succinct::select::BinSearchSelect<JacobsonRank<BitVector<u64>>>,
-    labels: Vec<u8>,
+    node_labels: Vec<u32>,
+    label_store: Vec<u8>,
 }
 
 impl LoudsTrie {
@@ -21,15 +23,13 @@ impl LoudsTrie {
             "Keys must be sorted lexicographically"
         );
 
-        // We need a standard temporary Trie to build the structure first
-        // because LOUDS requires Level-Order traversal (BFS) to construct.
+        // 1. Build standard Trie in memory first
         #[derive(Default)]
         struct TempNode {
             children: Vec<(u8, TempNode)>, // Ordered children
             is_terminal: bool,
         }
 
-        // Build standard Trie in memory first
         let mut root = TempNode::default();
         for key in keys {
             let mut node = &mut root;
@@ -45,24 +45,66 @@ impl LoudsTrie {
             node.is_terminal = true;
         }
 
-        // BFS to generate LOUDS bits and Labels
+        // 2. Compress into Radix Trie
+        struct CompressedNode {
+            children: Vec<(Vec<u8>, CompressedNode)>,
+            is_terminal: bool,
+        }
+
+        fn compress(node: TempNode) -> CompressedNode {
+            let mut new_children = Vec::new();
+            for (byte, child) in node.children {
+                let mut c_child = compress(child);
+                let mut label = vec![byte];
+
+                // Try to merge child into this edge
+                while c_child.children.len() == 1 && !c_child.is_terminal {
+                    let next_len = c_child.children[0].0.len();
+                    if label.len() + next_len > 127 {
+                        break;
+                    }
+                    let (next_label, next_node) = c_child.children.pop().unwrap();
+                    label.extend(next_label);
+                    c_child = next_node;
+                }
+                new_children.push((label, c_child));
+            }
+            CompressedNode {
+                children: new_children,
+                is_terminal: node.is_terminal,
+            }
+        }
+
+        let root_compressed = compress(root);
+
+        // 3. BFS to generate LOUDS bits and Labels
         let mut bits = BitVector::new();
         let mut terminals = BitVector::new();
-        let mut labels = Vec::new();
+        let mut node_labels = Vec::new();
+        let mut label_store = Vec::new();
         let mut queue = VecDeque::new();
 
         // Push fake super-root to start the sequence "10" for the actual root
-        // (Standard LOUDS usually starts with "10" representing the super-root -> root edge)
         bits.push_bit(true);
         bits.push_bit(false);
 
-        queue.push_back(&root);
-        terminals.push_bit(root.is_terminal);
+        queue.push_back(&root_compressed);
+        terminals.push_bit(root_compressed.is_terminal);
 
         while let Some(node) = queue.pop_front() {
-            for (char_byte, child) in &node.children {
+            for (label, child) in &node.children {
                 bits.push_bit(true); // '1' for every child
-                labels.push(*char_byte);
+                
+                let len = label.len();
+                let offset = label_store.len();
+                label_store.extend_from_slice(label);
+
+                // Pack (offset, len) into u32
+                // offset: 25 bits (32MB max), len: 7 bits (127 max)
+                assert!(len <= 127, "Label too long");
+                assert!(offset < (1 << 25), "Label store too large");
+                let packed = ((offset as u32) << 7) | (len as u32);
+                node_labels.push(packed);
 
                 terminals.push_bit(child.is_terminal);
 
@@ -76,7 +118,8 @@ impl LoudsTrie {
         Self {
             bits,
             terminals,
-            labels,
+            node_labels,
+            label_store,
             select,
         }
     }
@@ -106,8 +149,6 @@ impl LoudsTrie {
 
     // Returns the bit-index of the parent of the node at `index`.
     // Formula: select1(rank0(index) - 1)
-    // Note: This effectively finds which "0" block we are inside,
-    // and maps it back to the "1" that generated it.
     fn parent(&self, index: u64) -> Option<u64> {
         if index <= 1 {
             return None;
@@ -124,17 +165,17 @@ impl LoudsTrie {
         Some(s1)
     }
 
-    // Returns the Label (character) leading to this node.
-    // The label is stored at `rank1(index) - 2` because:
-    // - rank1 gives us the "Node ID" (dense 0..N)
-    // - Minus 1 for 0-based indexing
-    // - Minus 1 because the Root has no incoming label.
-    fn get_label(&self, index: u64) -> Option<u8> {
+    // Returns the Label (slice of bytes) leading to this node.
+    fn get_label(&self, index: u64) -> &[u8] {
         let r1 = self.select.rank1(index) as usize;
         if r1 < 2 {
-            return None;
+            return &[];
         } // Root (Node 1) has no label
-        Some(self.labels[r1 - 2])
+        
+        let packed = self.node_labels[r1 - 2];
+        let len = (packed & 0x7F) as usize;
+        let offset = (packed >> 7) as usize;
+        &self.label_store[offset..offset + len]
     }
 
     /// 3. BOTTOM-UP TRAVERSAL
@@ -144,9 +185,11 @@ impl LoudsTrie {
 
         // Walk up until we hit the root (index 0)
         while let Some(p_index) = self.parent(node_index) {
-            if let Some(char_byte) = self.get_label(node_index) {
-                result.push(char_byte);
-            }
+            let label = self.get_label(node_index);
+            // We are walking up, so we prepend the label
+            // But extending and reversing later is more efficient for Vec
+            result.extend(label.iter().rev());
+            
             node_index = p_index;
             if node_index == 0 {
                 break;
@@ -161,9 +204,10 @@ impl LoudsTrie {
     pub fn find(&self, key: &str) -> Option<u64> {
         // Start at the root node (position 0 in LOUDS represents super-root → root edge)
         let mut curr_node_idx = 0;
+        let mut key_bytes = key.as_bytes();
 
-        // 2. Traverse down for each character
-        for byte in key.bytes() {
+        // 2. Traverse down
+        while !key_bytes.is_empty() {
             // Get the starting bit-index where the children of `curr_node_idx` are stored.
             let mut scan_idx = match self.first_child(curr_node_idx) {
                 Some(idx) => idx,
@@ -174,13 +218,13 @@ impl LoudsTrie {
 
             // Iterate through the children (consecutive '1's in bits)
             while scan_idx < self.bits.bit_len() && self.bits.get_bit(scan_idx) {
-                // Check if this child's label matches our key character
-                if let Some(lbl) = self.get_label(scan_idx) {
-                    if lbl == byte {
-                        curr_node_idx = scan_idx;
-                        found = true;
-                        break;
-                    }
+                let label = self.get_label(scan_idx);
+                
+                if key_bytes.starts_with(label) {
+                    curr_node_idx = scan_idx;
+                    key_bytes = &key_bytes[label.len()..];
+                    found = true;
+                    break;
                 }
                 scan_idx += 1; // Move to next sibling
             }
@@ -211,11 +255,12 @@ impl LoudsTrie {
     }
 
     #[allow(dead_code)]
-    fn children(&self, node_idx: u64) -> Vec<u8> {
+    fn children(&self, node_idx: u64) -> Vec<String> {
         let mut result = Vec::new();
         if let Some(mut child_idx) = self.first_child(node_idx) {
             while child_idx < self.bits.bit_len() && self.bits.get_bit(child_idx) {
-                result.push(self.get_label(child_idx).unwrap_or(b'?'));
+                let label = self.get_label(child_idx);
+                result.push(String::from_utf8_lossy(label).to_string());
                 child_idx += 1;
             }
         }
@@ -274,40 +319,44 @@ impl LoudsTrie {
     /// Finds all nodes matching the given prefix (case-insensitive).
     /// Returns the bit-indices of all matching nodes.
     fn find_all_prefix_nodes_case_insensitive(&self, prefix: &str) -> Vec<u64> {
-        if prefix.is_empty() {
-            return vec![0]; // Return root
-        }
+        let prefix_bytes = prefix.as_bytes();
+        let mut results = Vec::new();
+        let mut queue = VecDeque::new();
+        
+        // Queue stores (node_idx, remaining_prefix_slice)
+        queue.push_back((0u64, prefix_bytes)); 
 
-        let prefix_bytes: Vec<u8> = prefix.bytes().collect();
-        let mut current_nodes = vec![0u64]; // Start at root
+        while let Some((node_idx, curr_prefix)) = queue.pop_front() {
+            if curr_prefix.is_empty() {
+                // We matched the full prefix. This node is a valid result root.
+                results.push(node_idx);
+                continue;
+            }
 
-        for &byte in &prefix_bytes {
-            let byte_lower = byte.to_ascii_lowercase();
-            let byte_upper = byte.to_ascii_uppercase();
-
-            let mut next_nodes = Vec::new();
-
-            for &node_idx in &current_nodes {
-                if let Some(mut child_idx) = self.first_child(node_idx) {
-                    while child_idx < self.bits.bit_len() && self.bits.get_bit(child_idx) {
-                        if let Some(lbl) = self.get_label(child_idx) {
-                            // Case-insensitive comparison
-                            if lbl.to_ascii_lowercase() == byte_lower || lbl == byte_upper {
-                                next_nodes.push(child_idx);
-                            }
-                        }
-                        child_idx += 1;
+            if let Some(mut child_idx) = self.first_child(node_idx) {
+                while child_idx < self.bits.bit_len() && self.bits.get_bit(child_idx) {
+                    let label = self.get_label(child_idx);
+                    
+                    let common_len = common_prefix_len_case_insensitive(label, curr_prefix);
+                    
+                    if common_len == curr_prefix.len() {
+                        // Case 1: Prefix is fully matched by (a prefix of) the label.
+                        // e.g. Label="apple", Prefix="app". Common=3.
+                        // This node matches.
+                        results.push(child_idx);
+                    } else if common_len == label.len() {
+                        // Case 2: Label is fully matched by (a prefix of) the prefix.
+                        // e.g. Label="ap", Prefix="apple". Common=2.
+                        // Continue down.
+                        queue.push_back((child_idx, &curr_prefix[common_len..]));
                     }
+                    
+                    child_idx += 1;
                 }
             }
-
-            if next_nodes.is_empty() {
-                return Vec::new();
-            }
-            current_nodes = next_nodes;
         }
 
-        current_nodes
+        results
     }
 
     pub fn node_count(&self) -> u64 {
@@ -319,14 +368,16 @@ impl LoudsTrie {
         println!("  - Total nodes: {}", self.node_count());
         println!("  - Total bits: {:<.2} MB", bits_to_mb(self.bits.bit_len()));
         println!("  - Total terminals: {:<.2} MB", bits_to_mb(self.terminals.bit_len()));
-        println!("  - Total labels: {:<.2} MB", bits_to_mb(self.labels.len() as u64 * 8));
+        println!("  - Node labels (u32): {:<.2} MB", bits_to_mb(self.node_labels.len() as u64 * 32));
+        println!("  - Label store (u8): {:<.2} MB", bits_to_mb(self.label_store.len() as u64 * 8));
     }
 
     pub fn size_on_disk(&self) -> usize {
         let bits_bytes = self.bits.block_len() * size_of::<usize>();
         let terminals_bytes = self.terminals.block_len() * size_of::<usize>();
-        let labels_bytes = self.labels.len();
-        bits_bytes + terminals_bytes + labels_bytes
+        let node_labels_bytes = self.node_labels.len() * size_of::<u32>();
+        let label_store_bytes = self.label_store.len();
+        bits_bytes + terminals_bytes + node_labels_bytes + label_store_bytes
     }
 }
 
@@ -358,10 +409,17 @@ impl Into<Vec<u8>> for LoudsTrie {
         bytes.extend_from_slice(&terminals_len.to_le_bytes());
         bytes.extend_from_slice(&terminals_bytes);
 
-        // Serialize labels
-        let labels_len = self.labels.len() as u32;
-        bytes.extend_from_slice(&labels_len.to_le_bytes());
-        bytes.extend_from_slice(&self.labels);
+        // Serialize node_labels (u32)
+        let node_labels_len = self.node_labels.len() as u32;
+        bytes.extend_from_slice(&node_labels_len.to_le_bytes());
+        for &val in &self.node_labels {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        // Serialize label_store (u8)
+        let label_store_len = self.label_store.len() as u32;
+        bytes.extend_from_slice(&label_store_len.to_le_bytes());
+        bytes.extend_from_slice(&self.label_store);
 
         bytes
     }
@@ -381,7 +439,7 @@ impl From<&[u8]> for LoudsTrie {
             offset += 8;
         }
         let mut bits = BitVector::block_with_capacity(bits_len);
-        for (i, &block) in bits_u64s.iter().enumerate() {
+        for (_i, &block) in bits_u64s.iter().enumerate() {
             bits.push_block(block);
         }
 
@@ -396,14 +454,24 @@ impl From<&[u8]> for LoudsTrie {
             offset += 8;
         }
         let mut terminals = BitVector::block_with_capacity(terminals_len);
-        for (i, &block) in terminals_u64s.iter().enumerate() {
+        for (_i, &block) in terminals_u64s.iter().enumerate() {
             terminals.push_block(block);
         }
 
-        // Deserialize labels
-        let labels_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        // Deserialize node_labels
+        let node_labels_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let labels = value[offset..offset + labels_len].to_vec();
+        let mut node_labels = Vec::with_capacity(node_labels_len);
+        for _ in 0..node_labels_len {
+            let val = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
+            node_labels.push(val);
+            offset += 4;
+        }
+
+        // Deserialize label_store
+        let label_store_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let label_store = value[offset..offset + label_store_len].to_vec();
 
         let rank = JacobsonRank::new(bits.clone());
         let select = BinSearchSelect::new(rank);
@@ -411,341 +479,342 @@ impl From<&[u8]> for LoudsTrie {
         Self {
             bits,
             terminals,
-            labels,
+            node_labels,
+            label_store,
             select,
         }
     }
 }
 
-// fn compress_labels(labels: &mut Vec<u8>, label_infos: &mut Vec<LabelInfo>) {
-//     let mut string_to_id = HashMap::new();
-//     let mut unique_strings = Vec::new();
-//     let mut node_to_unique_id = HashMap::new();
+fn compress_labels(labels: &mut Vec<u8>, label_infos: &mut Vec<LabelInfo>) {
+    let mut string_to_id = HashMap::new();
+    let mut unique_strings = Vec::new();
+    let mut node_to_unique_id = HashMap::new();
 
-//     let mut i = 0;
-//     while i < nodes.len() {
-//         let node = NodeView::from_slice(nodes, i);
-//         let start = node.label_start as usize;
-//         let end = start + node.label_len as usize;
-//         let slice = if end <= labels.len() { &labels[start..end] } else { &[] };
-//         let s = String::from_utf8_lossy(slice).to_string();
+    let mut i = 0;
+    while i < nodes.len() {
+        let node = NodeView::from_slice(nodes, i);
+        let start = node.label_start as usize;
+        let end = start + node.label_len as usize;
+        let slice = if end <= labels.len() { &labels[start..end] } else { &[] };
+        let s = String::from_utf8_lossy(slice).to_string();
 
-//         if let Some(&id) = string_to_id.get(&s) {
-//             node_to_unique_id.insert(i, id);
-//         } else {
-//             let id = unique_strings.len();
-//             string_to_id.insert(s.clone(), id);
-//             unique_strings.push(s);
-//             node_to_unique_id.insert(i, id);
-//         }
+        if let Some(&id) = string_to_id.get(&s) {
+            node_to_unique_id.insert(i, id);
+        } else {
+            let id = unique_strings.len();
+            string_to_id.insert(s.clone(), id);
+            unique_strings.push(s);
+            node_to_unique_id.insert(i, id);
+        }
 
-//         // Skip properly: 1 word for leaf, 2 words for internal
-//         i += if node.is_leaf { 1 } else { 2 };
-//     }
+        // Skip properly: 1 word for leaf, 2 words for internal
+        i += if node.is_leaf { 1 } else { 2 };
+    }
 
-//     let num_uniques = unique_strings.len();
-//     println!("    Reduced to {} unique strings. Analyzing substrings...", num_uniques);
+    let num_uniques = unique_strings.len();
+    println!("    Reduced to {} unique strings. Analyzing substrings...", num_uniques);
 
-//     // ==================================================================================
-//     // STEP 2: Substring Compression (Parent/Child)
-//     // ==================================================================================
-//     // Map short strings to substrings of longer strings
-//     let mut redirects: Vec<(usize, u32)> = (0..num_uniques).map(|i| (i, 0)).collect();
-//     let mut is_active = vec![true; num_uniques];
+    // ==================================================================================
+    // STEP 2: Substring Compression (Parent/Child)
+    // ==================================================================================
+    // Map short strings to substrings of longer strings
+    let mut redirects: Vec<(usize, u32)> = (0..num_uniques).map(|i| (i, 0)).collect();
+    let mut is_active = vec![true; num_uniques];
 
-//     let mut sorted_by_len: Vec<usize> = (0..num_uniques).collect();
-//     sorted_by_len.sort_unstable_by(|&a, &b| unique_strings[a].len().cmp(&unique_strings[b].len()));
+    let mut sorted_by_len: Vec<usize> = (0..num_uniques).collect();
+    sorted_by_len.sort_unstable_by(|&a, &b| unique_strings[a].len().cmp(&unique_strings[b].len()));
 
-//     let mut length_groups: HashMap<usize, Vec<usize>> = HashMap::new();
-//     for &id in &sorted_by_len {
-//         let len = unique_strings[id].len();
-//         if len > 0 { length_groups.entry(len).or_default().push(id); }
-//     }
+    let mut length_groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &id in &sorted_by_len {
+        let len = unique_strings[id].len();
+        if len > 0 { length_groups.entry(len).or_default().push(id); }
+    }
 
-//     let mut distinct_lengths: Vec<_> = length_groups.keys().cloned().collect();
-//     distinct_lengths.sort_unstable();
+    let mut distinct_lengths: Vec<_> = length_groups.keys().cloned().collect();
+    distinct_lengths.sort_unstable();
 
-//     // Rabin-Karp setup
-//     const P: u64 = 131;
-//     let max_len = if num_uniques > 0 { unique_strings[sorted_by_len[num_uniques - 1]].len() } else { 0 };
-//     let mut pow_p = vec![1u64; max_len + 1];
-//     for i in 1..=max_len { pow_p[i] = pow_p[i - 1].wrapping_mul(P); }
+    // Rabin-Karp setup
+    const P: u64 = 131;
+    let max_len = if num_uniques > 0 { unique_strings[sorted_by_len[num_uniques - 1]].len() } else { 0 };
+    let mut pow_p = vec![1u64; max_len + 1];
+    for i in 1..=max_len { pow_p[i] = pow_p[i - 1].wrapping_mul(P); }
 
-//     let mut substring_hashes: HashMap<u64, (usize, u32)> = HashMap::with_capacity(50_000);
-//     let mut targets_start_idx = 0;
+    let mut substring_hashes: HashMap<u64, (usize, u32)> = HashMap::with_capacity(50_000);
+    let mut targets_start_idx = 0;
 
-//     for &len in &distinct_lengths {
-//         let candidates = &length_groups[&len];
+    for &len in &distinct_lengths {
+        let candidates = &length_groups[&len];
 
-//         // Identify targets (strings strictly longer than current length)
-//         while targets_start_idx < num_uniques {
-//             let id = sorted_by_len[targets_start_idx];
-//             if unique_strings[id].len() > len { break; }
-//             targets_start_idx += 1;
-//         }
-//         if targets_start_idx >= num_uniques { break; }
+        // Identify targets (strings strictly longer than current length)
+        while targets_start_idx < num_uniques {
+            let id = sorted_by_len[targets_start_idx];
+            if unique_strings[id].len() > len { break; }
+            targets_start_idx += 1;
+        }
+        if targets_start_idx >= num_uniques { break; }
 
-//         let target_indices = &sorted_by_len[targets_start_idx..];
-//         substring_hashes.clear();
+        let target_indices = &sorted_by_len[targets_start_idx..];
+        substring_hashes.clear();
 
-//         let lead_power = pow_p[len - 1];
+        let lead_power = pow_p[len - 1];
 
-//         // Hash targets
-//         for &target_id in target_indices {
-//             let target_s = &unique_strings[target_id];
-//             let target_bytes = target_s.as_bytes();
-//             let mut current_hash: u64 = 0;
+        // Hash targets
+        for &target_id in target_indices {
+            let target_s = &unique_strings[target_id];
+            let target_bytes = target_s.as_bytes();
+            let mut current_hash: u64 = 0;
 
-//             // Initial window
-//             for k in 0..len {
-//                 current_hash = current_hash.wrapping_mul(P).wrapping_add(target_bytes[k] as u64);
-//             }
-//             substring_hashes.entry(current_hash).or_insert((target_id, 0));
+            // Initial window
+            for k in 0..len {
+                current_hash = current_hash.wrapping_mul(P).wrapping_add(target_bytes[k] as u64);
+            }
+            substring_hashes.entry(current_hash).or_insert((target_id, 0));
 
-//             // Rolling window
-//             for i in 1..=(target_bytes.len() - len) {
-//                 let prev = target_bytes[i - 1] as u64;
-//                 let new = target_bytes[i + len - 1] as u64;
-//                 current_hash = current_hash.wrapping_sub(prev.wrapping_mul(lead_power));
-//                 current_hash = current_hash.wrapping_mul(P).wrapping_add(new);
-//                 substring_hashes.entry(current_hash).or_insert((target_id, i as u32));
-//             }
-//         }
+            // Rolling window
+            for i in 1..=(target_bytes.len() - len) {
+                let prev = target_bytes[i - 1] as u64;
+                let new = target_bytes[i + len - 1] as u64;
+                current_hash = current_hash.wrapping_sub(prev.wrapping_mul(lead_power));
+                current_hash = current_hash.wrapping_mul(P).wrapping_add(new);
+                substring_hashes.entry(current_hash).or_insert((target_id, i as u32));
+            }
+        }
 
-//         // Match candidates
-//         for &short_id in candidates {
-//             let short_bytes = unique_strings[short_id].as_bytes();
-//             let mut h: u64 = 0;
-//             for &b in short_bytes { h = h.wrapping_mul(P).wrapping_add(b as u64); }
+        // Match candidates
+        for &short_id in candidates {
+            let short_bytes = unique_strings[short_id].as_bytes();
+            let mut h: u64 = 0;
+            for &b in short_bytes { h = h.wrapping_mul(P).wrapping_add(b as u64); }
 
-//             if let Some(&(target_id, offset)) = substring_hashes.get(&h) {
-//                 // Verify to avoid collisions
-//                 let target_bytes = unique_strings[target_id].as_bytes();
-//                 if short_bytes == &target_bytes[offset as usize..(offset as usize + len)] {
-//                     redirects[short_id] = (target_id, offset);
-//                     is_active[short_id] = false;
-//                 }
-//             }
-//         }
-//     }
+            if let Some(&(target_id, offset)) = substring_hashes.get(&h) {
+                // Verify to avoid collisions
+                let target_bytes = unique_strings[target_id].as_bytes();
+                if short_bytes == &target_bytes[offset as usize..(offset as usize + len)] {
+                    redirects[short_id] = (target_id, offset);
+                    is_active[short_id] = false;
+                }
+            }
+        }
+    }
 
-//     // Resolve Step 2 pointers
-//     let mut step2_resolution: Vec<(usize, u32)> = vec![(0, 0); num_uniques];
-//     let mut active_roots = Vec::new();
+    // Resolve Step 2 pointers
+    let mut step2_resolution: Vec<(usize, u32)> = vec![(0, 0); num_uniques];
+    let mut active_roots = Vec::new();
 
-//     for i in 0..num_uniques {
-//         let mut curr = i;
-//         let mut total_offset = 0;
-//         let mut depth = 0;
-//         while !is_active[curr] {
-//             let (next, off) = redirects[curr];
-//             if next == curr { break; } // safety
-//             total_offset += off;
-//             curr = next;
-//             depth += 1;
-//             if depth > 1000 { break; } // cycle breaker
-//         }
-//         step2_resolution[i] = (curr, total_offset);
-//     }
+    for i in 0..num_uniques {
+        let mut curr = i;
+        let mut total_offset = 0;
+        let mut depth = 0;
+        while !is_active[curr] {
+            let (next, off) = redirects[curr];
+            if next == curr { break; } // safety
+            total_offset += off;
+            curr = next;
+            depth += 1;
+            if depth > 1000 { break; } // cycle breaker
+        }
+        step2_resolution[i] = (curr, total_offset);
+    }
 
-//     for i in 0..num_uniques {
-//         if is_active[i] {
-//             active_roots.push(i);
-//         }
-//     }
+    for i in 0..num_uniques {
+        if is_active[i] {
+            active_roots.push(i);
+        }
+    }
 
-//     println!("    Step 2 complete. Merging {} root strings...", active_roots.len());
+    println!("    Step 2 complete. Merging {} root strings...", active_roots.len());
 
-//     // ==================================================================================
-//     // STEP 3: Greedy Superstring Merge (Overlap Optimization)
-//     // ==================================================================================
+    // ==================================================================================
+    // STEP 3: Greedy Superstring Merge (Overlap Optimization)
+    // ==================================================================================
 
-//     // Buckets for fast lookup: start_byte -> vec<root_id>
-//     let mut by_start_byte: Vec<Vec<usize>> = vec![Vec::new(); 256];
-//     let mut by_end_byte: Vec<Vec<usize>> = vec![Vec::new(); 256];
+    // Buckets for fast lookup: start_byte -> vec<root_id>
+    let mut by_start_byte: Vec<Vec<usize>> = vec![Vec::new(); 256];
+    let mut by_end_byte: Vec<Vec<usize>> = vec![Vec::new(); 256];
 
-//     let mut root_is_available = vec![false; num_uniques];
-//     let mut root_final_offsets: HashMap<usize, u32> = HashMap::with_capacity(active_roots.len());
+    let mut root_is_available = vec![false; num_uniques];
+    let mut root_final_offsets: HashMap<usize, u32> = HashMap::with_capacity(active_roots.len());
 
-//     let mut remaining_count = 0;
+    let mut remaining_count = 0;
 
-//     // Initialize buckets and handle empty strings immediately
-//     for &root_id in &active_roots {
-//         let s = &unique_strings[root_id];
-//         if s.is_empty() {
-//             // FIX: Empty strings have no overlap potential but must have an entry.
-//             // Map them to 0 (or any valid int), they read 0 bytes anyway.
-//             root_final_offsets.insert(root_id, 0);
-//             continue;
-//         }
+    // Initialize buckets and handle empty strings immediately
+    for &root_id in &active_roots {
+        let s = &unique_strings[root_id];
+        if s.is_empty() {
+            // FIX: Empty strings have no overlap potential but must have an entry.
+            // Map them to 0 (or any valid int), they read 0 bytes anyway.
+            root_final_offsets.insert(root_id, 0);
+            continue;
+        }
 
-//         let bytes = s.as_bytes();
-//         by_start_byte[bytes[0] as usize].push(root_id);
-//         by_end_byte[bytes[bytes.len()-1] as usize].push(root_id);
+        let bytes = s.as_bytes();
+        by_start_byte[bytes[0] as usize].push(root_id);
+        by_end_byte[bytes[bytes.len()-1] as usize].push(root_id);
 
-//         root_is_available[root_id] = true;
-//         remaining_count += 1;
-//     }
+        root_is_available[root_id] = true;
+        remaining_count += 1;
+    }
 
-//     let mut super_buffer = Vec::new();
+    let mut super_buffer = Vec::new();
 
-//     while remaining_count > 0 {
-//         // Pick a seed
-//         let mut best_seed = None;
+    while remaining_count > 0 {
+        // Pick a seed
+        let mut best_seed = None;
 
-//         // Quick seed selection: just pop from the active list until we find an available one
-//         while let Some(candidate) = active_roots.pop() {
-//             if root_is_available[candidate] {
-//                 best_seed = Some(candidate);
-//                 break;
-//             }
-//         }
+        // Quick seed selection: just pop from the active list until we find an available one
+        while let Some(candidate) = active_roots.pop() {
+            if root_is_available[candidate] {
+                best_seed = Some(candidate);
+                break;
+            }
+        }
 
-//         if best_seed.is_none() {
-//             // This happens if remaining_count > 0 but we ran out of seeds in the stack.
-//             // This should theoretically not happen if logic is perfect, but acts as safe exit.
-//             break;
-//         }
+        if best_seed.is_none() {
+            // This happens if remaining_count > 0 but we ran out of seeds in the stack.
+            // This should theoretically not happen if logic is perfect, but acts as safe exit.
+            break;
+        }
 
-//         let seed_id = best_seed.unwrap();
+        let seed_id = best_seed.unwrap();
 
-//         root_is_available[seed_id] = false;
-//         remaining_count -= 1;
+        root_is_available[seed_id] = false;
+        remaining_count -= 1;
 
-//         // Chain structure: (RootID, Overlap_With_Previous)
-//         let mut chain: VecDeque<(usize, u32)> = VecDeque::new();
-//         chain.push_back((seed_id, 0));
+        // Chain structure: (RootID, Overlap_With_Previous)
+        let mut chain: VecDeque<(usize, u32)> = VecDeque::new();
+        chain.push_back((seed_id, 0));
 
-//         let mut left_edge_id = seed_id;
-//         let mut right_edge_id = seed_id;
+        let mut left_edge_id = seed_id;
+        let mut right_edge_id = seed_id;
 
-//         // Grow chain greedy
-//         loop {
-//             let mut best_action = Action::None;
-//             let mut max_savings = 0;
+        // Grow chain greedy
+        loop {
+            let mut best_action = Action::None;
+            let mut max_savings = 0;
 
-//             // Try Append
-//             let r_str = &unique_strings[right_edge_id];
-//             // Safety check although empty strings are filtered out
-//             if !r_str.is_empty() {
-//                 let r_bytes = r_str.as_bytes();
-//                 let last_char = r_bytes[r_bytes.len() - 1] as usize;
+            // Try Append
+            let r_str = &unique_strings[right_edge_id];
+            // Safety check although empty strings are filtered out
+            if !r_str.is_empty() {
+                let r_bytes = r_str.as_bytes();
+                let last_char = r_bytes[r_bytes.len() - 1] as usize;
 
-//                 for &candidate_id in &by_start_byte[last_char] {
-//                     if !root_is_available[candidate_id] { continue; }
-//                     let c_str = &unique_strings[candidate_id];
-//                     let overlap = calc_overlap(r_str, c_str);
-//                     if overlap > max_savings {
-//                         max_savings = overlap;
-//                         best_action = Action::Append(candidate_id);
-//                     }
-//                 }
-//             }
+                for &candidate_id in &by_start_byte[last_char] {
+                    if !root_is_available[candidate_id] { continue; }
+                    let c_str = &unique_strings[candidate_id];
+                    let overlap = calc_overlap(r_str, c_str);
+                    if overlap > max_savings {
+                        max_savings = overlap;
+                        best_action = Action::Append(candidate_id);
+                    }
+                }
+            }
 
-//             // Try Prepend
-//             let l_str = &unique_strings[left_edge_id];
-//             if !l_str.is_empty() {
-//                 let l_bytes = l_str.as_bytes();
-//                 let first_char = l_bytes[0] as usize;
+            // Try Prepend
+            let l_str = &unique_strings[left_edge_id];
+            if !l_str.is_empty() {
+                let l_bytes = l_str.as_bytes();
+                let first_char = l_bytes[0] as usize;
 
-//                 for &candidate_id in &by_end_byte[first_char] {
-//                     if !root_is_available[candidate_id] { continue; }
-//                     let c_str = &unique_strings[candidate_id];
-//                     let overlap = calc_overlap(c_str, l_str);
-//                     if overlap >= max_savings && overlap > 0 {
-//                         max_savings = overlap;
-//                         best_action = Action::Prepend(candidate_id);
-//                     }
-//                 }
-//             }
+                for &candidate_id in &by_end_byte[first_char] {
+                    if !root_is_available[candidate_id] { continue; }
+                    let c_str = &unique_strings[candidate_id];
+                    let overlap = calc_overlap(c_str, l_str);
+                    if overlap >= max_savings && overlap > 0 {
+                        max_savings = overlap;
+                        best_action = Action::Prepend(candidate_id);
+                    }
+                }
+            }
 
-//             match best_action {
-//                 Action::None => break,
-//                 Action::Append(id) => {
-//                     chain.push_back((id, max_savings as u32));
-//                     root_is_available[id] = false;
-//                     right_edge_id = id;
-//                     remaining_count -= 1;
-//                 },
-//                 Action::Prepend(id) => {
-//                     chain.push_front((id, max_savings as u32));
-//                     root_is_available[id] = false;
-//                     left_edge_id = id;
-//                     remaining_count -= 1;
-//                 }
-//             }
-//         }
+            match best_action {
+                Action::None => break,
+                Action::Append(id) => {
+                    chain.push_back((id, max_savings as u32));
+                    root_is_available[id] = false;
+                    right_edge_id = id;
+                    remaining_count -= 1;
+                },
+                Action::Prepend(id) => {
+                    chain.push_front((id, max_savings as u32));
+                    root_is_available[id] = false;
+                    left_edge_id = id;
+                    remaining_count -= 1;
+                }
+            }
+        }
 
-//         // Finalize chain to buffer
-//         if chain.is_empty() { continue; }
+        // Finalize chain to buffer
+        if chain.is_empty() { continue; }
 
-//         let current_write_pos = super_buffer.len() as u32;
+        let current_write_pos = super_buffer.len() as u32;
 
-//         // Handle first item in chain
-//         let first_id = chain[0].0;
-//         root_final_offsets.insert(first_id, current_write_pos);
-//         super_buffer.extend_from_slice(unique_strings[first_id].as_bytes());
+        // Handle first item in chain
+        let first_id = chain[0].0;
+        root_final_offsets.insert(first_id, current_write_pos);
+        super_buffer.extend_from_slice(unique_strings[first_id].as_bytes());
 
-//         // Handle rest
-//         let mut prev_id = first_id;
-//         for i in 1..chain.len() {
-//             let next_id = chain[i].0;
-//             // For Prepend, we pushed (id, overlap).
-//             // For Append, we pushed (id, overlap).
-//             // In both cases, the 'overlap' value in the tuple represented overlap
-//             // relative to the neighbor in the direction we grew.
-//             // Since we ordered the deque correctly [Left ... Right],
-//             // we can just re-calculate linear overlaps to be 100% safe and simple.
+        // Handle rest
+        let mut prev_id = first_id;
+        for i in 1..chain.len() {
+            let next_id = chain[i].0;
+            // For Prepend, we pushed (id, overlap).
+            // For Append, we pushed (id, overlap).
+            // In both cases, the 'overlap' value in the tuple represented overlap
+            // relative to the neighbor in the direction we grew.
+            // Since we ordered the deque correctly [Left ... Right],
+            // we can just re-calculate linear overlaps to be 100% safe and simple.
 
-//             let prev_s = &unique_strings[prev_id];
-//             let next_s = &unique_strings[next_id];
-//             let ov = calc_overlap(prev_s, next_s);
+            let prev_s = &unique_strings[prev_id];
+            let next_s = &unique_strings[next_id];
+            let ov = calc_overlap(prev_s, next_s);
 
-//             // Write only the non-overlapping suffix
-//             let next_bytes = next_s.as_bytes();
-//             if ov < next_bytes.len() {
-//                 let to_write = &next_bytes[ov..];
-//                 // The logical start of this string is 'ov' bytes before the end of buffer
-//                 let start_pos = super_buffer.len() as u32 - ov as u32;
-//                 root_final_offsets.insert(next_id, start_pos);
-//                 super_buffer.extend_from_slice(to_write);
-//             } else {
-//                 // Fully contained (should be rare given Step 2, but possible)
-//                 let start_pos = super_buffer.len() as u32 - ov as u32;
-//                 root_final_offsets.insert(next_id, start_pos);
-//             }
-//             prev_id = next_id;
-//         }
-//     }
+            // Write only the non-overlapping suffix
+            let next_bytes = next_s.as_bytes();
+            if ov < next_bytes.len() {
+                let to_write = &next_bytes[ov..];
+                // The logical start of this string is 'ov' bytes before the end of buffer
+                let start_pos = super_buffer.len() as u32 - ov as u32;
+                root_final_offsets.insert(next_id, start_pos);
+                super_buffer.extend_from_slice(to_write);
+            } else {
+                // Fully contained (should be rare given Step 2, but possible)
+                let start_pos = super_buffer.len() as u32 - ov as u32;
+                root_final_offsets.insert(next_id, start_pos);
+            }
+            prev_id = next_id;
+        }
+    }
 
-//     // ==================================================================================
-//     // STEP 4: Finalize Pointers
-//     // ==================================================================================
-//     println!("    Updating pointers...");
+    // ==================================================================================
+    // STEP 4: Finalize Pointers
+    // ==================================================================================
+    println!("    Updating pointers...");
 
-//     let mut i = 0;
-//     while i < nodes.len() {
-//         let node = NodeView::from_slice(nodes, i);
-//         let unique_id = *node_to_unique_id.get(&i).expect("Node index missing from map");
+    let mut i = 0;
+    while i < nodes.len() {
+        let node = NodeView::from_slice(nodes, i);
+        let unique_id = *node_to_unique_id.get(&i).expect("Node index missing from map");
 
-//         let (root_id, offset_in_root) = step2_resolution[unique_id];
+        let (root_id, offset_in_root) = step2_resolution[unique_id];
 
-//         // Safety: root_id comes from active_roots.
-//         // If root was empty string, it's in the map (offset 0).
-//         // If root was merged, it's in the map.
-//         let root_base = *root_final_offsets.get(&root_id).expect("Root ID missing from offsets");
+        // Safety: root_id comes from active_roots.
+        // If root was empty string, it's in the map (offset 0).
+        // If root was merged, it's in the map.
+        let root_base = *root_final_offsets.get(&root_id).expect("Root ID missing from offsets");
 
-//         NodeView::set_label_start(nodes, i, root_base + offset_in_root);
+        NodeView::set_label_start(nodes, i, root_base + offset_in_root);
 
-//         // Skip properly: 1 word for leaf, 2 words for internal
-//         i += if node.is_leaf { 1 } else { 2 };
-//     }
+        // Skip properly: 1 word for leaf, 2 words for internal
+        i += if node.is_leaf { 1 } else { 2 };
+    }
 
-//     labels.clear();
-//     labels.append(&mut super_buffer);
+    labels.clear();
+    labels.append(&mut super_buffer);
 
-//     println!( "    Total compression complete. Final size: {} bytes.", labels.len());
-// }
+    println!( "    Total compression complete. Final size: {} bytes.", labels.len());
+}
 
 #[allow(dead_code)]
 fn common_prefix_len_case_insensitive(s1: &[u8], s2: &[u8]) -> usize {
