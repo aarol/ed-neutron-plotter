@@ -4,6 +4,7 @@ import { Galaxy } from "./galaxy";
 import { RouteDialog } from "./route-dialog";
 import * as wasm from "../rust-module/pkg";
 import { Vector3 } from "three/webgpu";
+import { api } from "./api";
 
 async function main() {
   const galaxy = new Galaxy();
@@ -53,14 +54,17 @@ async function main() {
   const searchBox = new SearchBox({
     placeholder: "Enter target star..",
     onSearch: async (query: string) => {
-      // Open the route panel when Enter is pressed
-      openRoutePanel(query);
-      const pos = searcher?.get_coords_for_star(query);
+      const pos = searcher?.get_coords_for_star(query) ?? await api.getStarCoords(query);
       if (pos) {
-        console.log(`Found star "${query}" at (${pos.x}, ${pos.y}, ${pos.z})`);
+        if (!(pos instanceof wasm.Coords)) {
+          console.log("Fetched star coordinates from API:", pos);
+        }
+        console.log(`Found star "${query}": (${pos.x}, ${pos.y}, ${pos.z})`);
         galaxy.setTarget(new Vector3(pos.x, pos.y, pos.z));
+
+        openRoutePanel(query);
       } else {
-        alert(`Star "${query}" not found.`);
+        window.alert("Star not found: " + query);
       }
     },
     onSuggest: onSuggest,

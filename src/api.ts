@@ -1,21 +1,21 @@
 import { Vector3 } from "three";
 
-export interface SystemInfoResponse {
+export type SystemInfoResponse = {
   name: string
-  coords: Coords
-}
+  coords: ApiCoords
+} | []
 
-export interface Coords {
+export interface ApiCoords {
   x: number
   y: number
   z: number
 }
 
-export function vec3FromCoords(coords: Coords): Vector3 {
+export function vec3FromCoords(coords: ApiCoords): Vector3 {
   return new Vector3(coords.x, coords.y, coords.z);
 }
 
-async function getStarCoords(star: string): Promise<Coords> {
+async function getStarCoords(star: string): Promise<ApiCoords | null> {
   const apiUrl = "https://www.edsm.net/api-v1/system"
 
   const response = await fetch(`${apiUrl}?systemName=${encodeURI(star)}&showCoordinates=1`);
@@ -25,6 +25,10 @@ async function getStarCoords(star: string): Promise<Coords> {
   }
 
   const data: SystemInfoResponse = await response.json();
+  if (Array.isArray(data)) {
+    // If the star is not found, EDSM returns an empty array
+    return null;
+  }
 
   return {
     x: -data.coords.x / 1000,
