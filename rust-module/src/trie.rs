@@ -8,8 +8,9 @@ use succinct::{
 
 pub struct LoudsTrie {
     bits: succinct::BitVector<u64>,
+    bits_select: succinct::select::BinSearchSelect<JacobsonRank<BitVector<u64>>>,
     terminals: succinct::BitVector<u64>,
-    select: succinct::select::BinSearchSelect<JacobsonRank<BitVector<u64>>>,
+    terminals_rank: JacobsonRank<BitVector<u64>>,
 
     label_type: succinct::BitVector<u64>,
     label_type_rank: JacobsonRank<BitVector<u64>>,
@@ -149,16 +150,18 @@ impl LoudsTrie {
         let rank = JacobsonRank::new(bits.clone());
         let select = BinSearchSelect::new(rank);
         let label_type_rank = JacobsonRank::new(label_type.clone());
+        let terminals_rank = JacobsonRank::new(terminals.clone());
 
         Self {
             bits,
             terminals,
-            select,
+            bits_select: select,
             label_type,
             label_type_rank,
             simple_labels,
             complex_labels,
             label_store: new_store,
+            terminals_rank,
         }
     }
 
@@ -170,11 +173,11 @@ impl LoudsTrie {
         if index >= self.bits.bit_len() || !self.bits.get_bit(index) {
             return None;
         }
-        let r1 = self.select.rank1(index);
+        let r1 = self.bits_select.rank1(index);
         if r1 == 0 {
             return None;
         }
-        let s0 = self.select.select0(r1 - 1)?;
+        let s0 = self.bits_select.select0(r1 - 1)?;
 
         // Check if the child position is valid (should be a '1' bit representing a node)
         let child_pos = s0 + 1;
@@ -192,20 +195,20 @@ impl LoudsTrie {
             return None;
         } // Super-root (0) and root edge (1) have no parent
 
-        let r0 = self.select.rank0(index);
+        let r0 = self.bits_select.rank0(index);
         if r0 == 0 {
             return None;
         } // No '0' bits before this position
 
         // select1 is 0-indexed in succinct, so we need r0 - 1 for parent
-        let s1 = self.select.select1(r0 - 1)?;
+        let s1 = self.bits_select.select1(r0 - 1)?;
 
         Some(s1)
     }
 
     // Returns the Label (slice of bytes) leading to this node.
     fn get_label(&self, index: u64) -> &[u8] {
-        let r1 = self.select.rank1(index);
+        let r1 = self.bits_select.rank1(index);
         if r1 < 2 {
             return &[];
         } // Root (Node 1) has no label
@@ -300,15 +303,18 @@ impl LoudsTrie {
         }
 
         // 3. Final Check: Is this node a valid end-of-word?
-        self.is_terminal(curr_node_idx)
-            .then(|| self.select.rank1(curr_node_idx))
+        // If so, return its terminal rank1 (uniquely identifies the key)
+        self.is_terminal(curr_node_idx).then(|| {
+            let node_id = self.bits_select.rank1(curr_node_idx);
+            self.terminals_rank.rank1(node_id - 1)
+        })
     }
 
     /// Helper: Checks if a node_idx is marked as terminal.
     fn is_terminal(&self, node_idx: u64) -> bool {
         // Map bit-index to Node ID (rank1).
         // Node ID 0 is usually super-root, Node ID 1 is Root.
-        let node_id = self.select.rank1(node_idx);
+        let node_id = self.bits_select.rank1(node_idx);
 
         // Check bounds and look up in the terminals bit-vector
         if node_id > 0 && node_id <= self.terminals.bit_len() {
@@ -425,7 +431,7 @@ impl LoudsTrie {
     }
 
     pub fn node_count(&self) -> u64 {
-        self.select.rank1(self.bits.bit_len() - 1)
+        self.bits_select.rank1(self.bits.bit_len() - 1)
     }
 
     pub fn analyze_structure(&self) {
@@ -599,19 +605,19 @@ impl From<&[u8]> for LoudsTrie {
         let rank = JacobsonRank::new(bits.clone());
         let select = BinSearchSelect::new(rank);
         let label_type_rank = JacobsonRank::new(label_type.clone());
+        let terminals_rank = JacobsonRank::new(terminals.clone());
 
-        let mut trie = Self {
+        Self {
             bits,
             terminals,
-            select,
+            bits_select: select,
             label_type,
             label_type_rank,
             simple_labels,
             complex_labels,
             label_store,
-        };
-        trie.compress_store();
-        trie
+            terminals_rank,
+        }
     }
 }
 
@@ -695,7 +701,11 @@ fn compress_labels(labels: &[Vec<u8>]) -> (Vec<u8>, Vec<(u32, u32)>) {
     }
 
     let num_uniques = unique_strings.len();
-    println!("Compressing {} labels into {} unique strings", labels.len(), num_uniques);
+    println!(
+        "Compressing {} labels into {} unique strings",
+        labels.len(),
+        num_uniques
+    );
     if num_uniques == 0 {
         return (Vec::new(), vec![(0, 0); labels.len()]);
     }

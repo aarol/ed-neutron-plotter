@@ -6,8 +6,6 @@ use std::{
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{convert::WasmAbi, prelude::wasm_bindgen};
 
-use crate::fast_json_parser::JsonCoords;
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct System {
     // id: i64,
@@ -81,12 +79,6 @@ impl WasmAbi for Coords {
         _prim4: Self::Prim4,
     ) -> Self {
         Coords([prim1, prim2, prim3])
-    }
-}
-
-impl From<&JsonCoords> for Coords {
-    fn from(c: &JsonCoords) -> Self {
-        Coords([c.x as f32, c.y as f32, c.z as f32])
     }
 }
 

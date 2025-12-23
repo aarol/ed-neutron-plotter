@@ -18,26 +18,17 @@ const INVALID_IDX: u32 = u32::MAX;
 
 /// Builder for constructing a flat KD-tree from 3D points.
 /// Points are provided during construction but NOT stored in the final tree.
-pub struct KdTreeBuilder {
-    points: Vec<[f32; 3]>,
+pub struct KdTreeBuilder<'a> {
+    points: &'a [[f32; 3]],
 }
 
-impl KdTreeBuilder {
+impl<'a> KdTreeBuilder<'a> {
     pub fn new() -> Self {
-        Self { points: Vec::new() }
+        Self { points: &[] }
     }
 
-    pub fn from_points(points: Vec<[f32; 3]>) -> Self {
+    pub fn from_points(points: &'a [[f32; 3]]) -> Self {
         Self { points }
-    }
-
-    /// Add a point. The index of this point (0, 1, 2, ...) will be stored in the tree.
-    pub fn push(&mut self, x: f32, y: f32, z: f32) {
-        self.points.push([x, y, z]);
-    }
-
-    pub fn push_point(&mut self, point: [f32; 3]) {
-        self.points.push(point);
     }
 
     pub fn len(&self) -> usize {
@@ -108,7 +99,7 @@ impl KdTreeBuilder {
     }
 }
 
-impl Default for KdTreeBuilder {
+impl<'a> Default for KdTreeBuilder<'a> {
     fn default() -> Self {
         Self::new()
     }
@@ -142,9 +133,8 @@ impl<'a> CompactKdTree<'a> {
         let tree_end = tree_start + tree_len * 4;
         let tree_bytes = &data[tree_start..tree_end];
 
-        let tree: &[u32] = unsafe {
-            std::slice::from_raw_parts(tree_bytes.as_ptr() as *const u32, tree_len)
-        };
+        let tree: &[u32] =
+            unsafe { std::slice::from_raw_parts(tree_bytes.as_ptr() as *const u32, tree_len) };
 
         Self { tree }
     }
@@ -308,10 +298,26 @@ impl<'a> CompactKdTree<'a> {
             (right_child, left_child)
         };
 
-        self.nearest_n_within_recursive(query, points, first, depth + 1, radius_sq, max_results, results);
+        self.nearest_n_within_recursive(
+            query,
+            points,
+            first,
+            depth + 1,
+            radius_sq,
+            max_results,
+            results,
+        );
 
         if diff_sq <= radius_sq {
-            self.nearest_n_within_recursive(query, points, second, depth + 1, radius_sq, max_results, results);
+            self.nearest_n_within_recursive(
+                query,
+                points,
+                second,
+                depth + 1,
+                radius_sq,
+                max_results,
+                results,
+            );
         }
     }
 
@@ -412,8 +418,7 @@ mod tests {
 
     #[test]
     fn test_single_point() {
-        let mut builder = KdTreeBuilder::new();
-        builder.push(1.0, 2.0, 3.0);
+        let builder = KdTreeBuilder::from_points(&[[1.0, 2.0, 3.0]]);
 
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);
@@ -431,7 +436,13 @@ mod tests {
 
     #[test]
     fn test_multiple_points() {
-        let mut builder = KdTreeBuilder::new();
+        let builder = KdTreeBuilder::from_points(&[
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ]);
         let raw_points = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -439,9 +450,6 @@ mod tests {
             [0.0, 0.0, 1.0],
             [1.0, 1.0, 1.0],
         ];
-        for p in &raw_points {
-            builder.push_point(*p);
-        }
 
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);
@@ -466,20 +474,16 @@ mod tests {
 
     #[test]
     fn test_within_radius() {
-        let mut builder = KdTreeBuilder::new();
-        let raw_points = [
+        let raw_points = &[
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [2.0, 0.0, 0.0],
             [10.0, 0.0, 0.0],
         ];
-        for p in &raw_points {
-            builder.push_point(*p);
-        }
-
+        let builder = KdTreeBuilder::from_points(raw_points);
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);
-        let points = make_coords(&raw_points);
+        let points = make_coords(raw_points);
 
         // Radius 1.5 should include first 2 points
         let results = kdtree.within_radius(c(0.0, 0.0, 0.0), &points, 1.5);
@@ -496,12 +500,11 @@ mod tests {
 
     #[test]
     fn test_nearest_n_within() {
-        let mut builder = KdTreeBuilder::new();
         let mut raw_points = Vec::new();
         for i in 0..10 {
-            builder.push(i as f32, 0.0, 0.0);
             raw_points.push([i as f32, 0.0, 0.0]);
         }
+        let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);
@@ -514,19 +517,13 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let mut builder = KdTreeBuilder::new();
-        builder.push(1.0, 2.0, 3.0);
-        builder.push(4.0, 5.0, 6.0);
-        builder.push(7.0, 8.0, 9.0);
+        let raw_points = &[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
 
+        let builder = KdTreeBuilder::from_points(raw_points);
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);
 
-        let points = make_coords(&[
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-        ]);
+        let points = make_coords(raw_points);
 
         // Serialize
         let bytes = kdtree.to_bytes();
@@ -543,18 +540,17 @@ mod tests {
 
     #[test]
     fn test_large_tree() {
-        let mut builder = KdTreeBuilder::new();
         let mut raw_points = Vec::with_capacity(1000);
 
         // Create a grid of points
         for x in 0..10 {
             for y in 0..10 {
                 for z in 0..10 {
-                    builder.push(x as f32, y as f32, z as f32);
                     raw_points.push([x as f32, y as f32, z as f32]);
                 }
             }
         }
+        let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);
@@ -576,15 +572,8 @@ mod tests {
 
     #[test]
     fn test_negative_coordinates() {
-        let mut builder = KdTreeBuilder::new();
-        let raw_points = [
-            [-1.0, -1.0, -1.0],
-            [1.0, 1.0, 1.0],
-            [0.0, 0.0, 0.0],
-        ];
-        for p in &raw_points {
-            builder.push_point(*p);
-        }
+        let raw_points = [[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]];
+        let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);
@@ -601,10 +590,11 @@ mod tests {
 
     #[test]
     fn test_size_in_bytes() {
-        let mut builder = KdTreeBuilder::new();
+        let mut raw_points = Vec::new();
         for i in 0..100 {
-            builder.push(i as f32, 0.0, 0.0);
+            raw_points.push([i as f32, 0.0, 0.0]);
         }
+        let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
         let kdtree = CompactKdTree::new(&tree);

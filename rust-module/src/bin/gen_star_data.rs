@@ -43,7 +43,7 @@ fn analyze() -> io::Result<()> {
 
 fn main() -> io::Result<()> {
     if std::env::args().any(|arg| arg.contains("analyze")) {
-      return analyze();
+        return analyze();
     }
 
     let out_dir = std::path::Path::new("../public/data");
@@ -54,7 +54,7 @@ fn main() -> io::Result<()> {
     // let systems = std::fs::File::open("systems_1day.json")?;
 
     let mut coords = vec![];
-    let mut stars = vec![];
+    let mut star_names = vec![];
 
     let parser = SystemParser::new(neutrons)?;
 
@@ -70,12 +70,12 @@ fn main() -> io::Result<()> {
         // The coordinates are in light years, three.js doesn't like such huge distances
         // This will reduce the scale to max [-100, 100] in each axis
         coords.push(Coords::new(
-            -(coord.x / 1000.0) as f32,
-            (coord.y / 1000.0) as f32,
-            (coord.z / 1000.0) as f32,
+            -(coord.x() / 1000.0) as f32,
+            (coord.y() / 1000.0) as f32,
+            (coord.z() / 1000.0) as f32,
         ));
 
-        stars.push(name.to_owned());
+        star_names.push(name.to_owned());
     })?;
 
     // parser2.for_each(|name, _coords| {
@@ -94,9 +94,31 @@ fn main() -> io::Result<()> {
     //     trie.insert(name);
     // })?;
 
-    let star_coords: Vec<[f32; 3]> = coords.iter().map(|s| s.to_slice()).collect();
-    let kdtree_indices = kdtree::KdTreeBuilder::from_points(star_coords).build();
+    let mut sorted_star_names = star_names.clone();
+    println!("Sorting star names..");
+    sorted_star_names.par_sort_unstable();
+    let trie = LoudsTrie::new(&sorted_star_names.iter().map(String::as_str).collect::<Vec<&str>>());
 
+    let star_coords: Vec<[f32; 3]> = coords.iter().map(|s| s.to_slice()).collect();
+
+    // for every star, put the coord corresponding to its name in the right place in the star coords array
+    // TODO! find a better way to do this
+    println!("Reassigning star coords according to trie..");
+    let mut sorted_coords = vec![[0.0; 3]; star_coords.len()];
+    for (i, (name, coord)) in star_names.iter().zip(coords).enumerate() {
+        let star_idx = trie.find(name).expect("Always in the trie");
+        sorted_coords[star_idx as usize] = coord.to_slice();
+        if i % 100000 == 0 {
+            println!("Reassigning star {}", i);
+        }
+    }
+
+    let kdtree_indices = kdtree::KdTreeBuilder::from_points(&sorted_coords).build();
+    let jacksons_id = trie.find("Jackson's Lighthouse").unwrap();
+    println!(
+        "Jackson's Lighthouse is at index {}, coords: {:?}",
+        jacksons_id, sorted_coords[jacksons_id as usize]
+    );
     let kdtree = kdtree::CompactKdTree::new(&kdtree_indices);
 
     let mut kdtree_file = std::fs::File::create(out_dir.join("star_kdtree.bin"))?;
@@ -106,8 +128,8 @@ fn main() -> io::Result<()> {
 
     let bytes = unsafe {
         std::slice::from_raw_parts(
-            coords.as_ptr() as *const u8,
-            coords.len() * std::mem::size_of::<Coords>(),
+            sorted_coords.as_ptr() as *const u8,
+            sorted_coords.len() * std::mem::size_of::<Coords>(),
         )
     };
     stars_file.write_all(bytes)?;
@@ -117,10 +139,6 @@ fn main() -> io::Result<()> {
 
     //     p.write_to_file(&mut file).unwrap();
     // });
-
-    println!("Sorting star data");
-    stars.par_sort_unstable();
-    let trie = LoudsTrie::new(&stars.iter().map(String::as_str).collect::<Vec<&str>>());
 
     for star in trie.suggest("Speam", 10) {
         println!("  - {}: {:?}", star, trie.find(&star));

@@ -1,13 +1,7 @@
 use memchr::memchr;
-use serde::Deserialize;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
-#[derive(Deserialize, Clone, Copy)]
-pub struct JsonCoords {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-}
+use crate::system::Coords;
 
 pub struct SystemParser<R: Read> {
     reader: BufReader<R>,
@@ -27,7 +21,7 @@ impl<R: Read + Seek> SystemParser<R> {
 
     pub fn for_each<F>(mut self, mut f: F) -> std::io::Result<()>
     where
-        F: FnMut(&str, JsonCoords),
+        F: FnMut(&str, Coords),
     {
         let mut first_line = true;
 
@@ -54,7 +48,7 @@ impl<R: Read + Seek> SystemParser<R> {
         Ok(())
     }
 
-    fn parse_line(buffer: &str) -> Option<(&str, JsonCoords)> {
+    fn parse_line(buffer: &str) -> Option<(&str, Coords)> {
         let line = buffer.trim();
 
         // Skip empty lines and closing bracket
@@ -93,7 +87,7 @@ impl<R: Read + Seek> SystemParser<R> {
                 memchr::memmem::find(&bytes[coords_start..], x_key)? + coords_start + x_key.len();
             let x_end = memchr(b',', &bytes[x_start..])?;
             let x_str = unsafe { std::str::from_utf8_unchecked(&bytes[x_start..x_start + x_end]) };
-            let x = x_str.parse::<f64>().ok()?;
+            let x = x_str.parse::<f32>().ok()?;
 
             // Find y
             let y_key = b"\"y\":";
@@ -101,7 +95,7 @@ impl<R: Read + Seek> SystemParser<R> {
                 memchr::memmem::find(&bytes[coords_start..], y_key)? + coords_start + y_key.len();
             let y_end = memchr(b',', &bytes[y_start..])?;
             let y_str = unsafe { std::str::from_utf8_unchecked(&bytes[y_start..y_start + y_end]) };
-            let y = y_str.parse::<f64>().ok()?;
+            let y = y_str.parse::<f32>().ok()?;
 
             // Find z
             let z_key = b"\"z\":";
@@ -109,9 +103,9 @@ impl<R: Read + Seek> SystemParser<R> {
                 memchr::memmem::find(&bytes[coords_start..], z_key)? + coords_start + z_key.len();
             let z_end = memchr(b'}', &bytes[z_start..])?;
             let z_str = unsafe { std::str::from_utf8_unchecked(&bytes[z_start..z_start + z_end]) };
-            let z = z_str.parse::<f64>().ok()?;
+            let z = z_str.parse::<f32>().ok()?;
 
-            JsonCoords { x, y, z }
+            Coords::new(x, y, z)
         };
 
         Some((name, coords))

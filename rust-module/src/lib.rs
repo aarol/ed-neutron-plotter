@@ -1,6 +1,5 @@
 pub mod fast_json_parser;
 pub mod kdtree;
-mod louds_trie;
 mod ordered_f32;
 pub mod plotter;
 pub mod system;
@@ -9,28 +8,39 @@ pub mod utils;
 
 use wasm_bindgen::prelude::*;
 
-use crate::{fast_json_parser::JsonCoords, system::Coords, trie::LoudsTrie};
+use crate::{system::Coords, trie::LoudsTrie};
 
+/// Stores the trie and other data needed for autocomplete and plotter
 #[wasm_bindgen]
 pub struct Searcher {
     trie: LoudsTrie,
+    stars: Vec<Coords>,
 }
 
 #[wasm_bindgen]
 impl Searcher {
     #[wasm_bindgen(constructor)]
-    pub fn new(trie_data: &[u8]) -> Searcher {
+    pub fn new(trie_data: &[u8], stars: &[f32]) -> Searcher {
+        // This is not zero-cost because the succinct data structures need to be initialized
         let trie = LoudsTrie::from(trie_data);
-        Searcher { trie }
+        let stars = stars.chunks(3).map(Coords::from_slice).collect::<Vec<_>>();
+
+        Searcher { trie, stars }
     }
 
-    #[wasm_bindgen]
     pub fn suggest_words(&self, prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
         self.trie
             .suggest(prefix, num_suggestions)
             .into_iter()
             .map(|s| JsValue::from_str(s.as_str()))
             .collect()
+    }
+
+    pub fn get_coords_for_star(&self, star_name: &str) -> Option<Coords> {
+        self.trie.find(star_name).map(|index| {
+            let coords = self.stars[index as usize];
+            coords
+        })
     }
 }
 
@@ -60,11 +70,8 @@ pub fn find_route(
 
     log_u32(kdtree.size() as u32);
 
-    let start: JsonCoords = serde_wasm_bindgen::from_value(start).unwrap();
-    let end: JsonCoords = serde_wasm_bindgen::from_value(end).unwrap();
-
-    let start = Coords::from(&start);
-    let end = Coords::from(&end);
+    let start: Coords = serde_wasm_bindgen::from_value(start).unwrap();
+    let end: Coords = serde_wasm_bindgen::from_value(end).unwrap();
 
     log(&format!("Finding route from ({}) to ({})", start, end));
 

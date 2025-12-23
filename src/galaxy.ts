@@ -1,7 +1,7 @@
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
-import { color, cos, float, Fn, instancedArray, instancedBufferAttribute, sin, uniform, vec4 } from 'three/tsl';
-import { AdditiveBlending, Box3, Box3Helper, BoxHelper, BufferAttribute, BufferGeometry, CubeTextureLoader, InstancedMesh, Mesh, PerspectiveCamera, PlaneGeometry, Points, PointsNodeMaterial, Scene, Sphere, SphereGeometry, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
+import { color, float, uniform, vec4 } from 'three/tsl';
+import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Scene, SphereGeometry, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
 
 
 export class Galaxy {
@@ -118,16 +118,16 @@ export class Galaxy {
     for (let i = 0; i < starPositionArrays.length; i++) {
       const arr = starPositionArrays[i];
 
-      let aabb_min_x = arr.getFloat32(0, true)
-      let aabb_min_y = arr.getFloat32(4, true)
-      let aabb_min_z = arr.getFloat32(8, true)
-      let aabb_min = new Vector3(aabb_min_x, aabb_min_y, aabb_min_z).divideScalar(1000)
-      let aabb_max_x = arr.getFloat32(12, true)
-      let aabb_max_y = arr.getFloat32(16, true)
-      let aabb_max_z = arr.getFloat32(20, true)
-      let aabb_max = new Vector3(aabb_max_x, aabb_max_y, aabb_max_z).divideScalar(1000)
+      // let aabb_min_x = arr.getFloat32(0, true)
+      // let aabb_min_y = arr.getFloat32(4, true)
+      // let aabb_min_z = arr.getFloat32(8, true)
+      // let aabb_min = new Vector3(aabb_min_x, aabb_min_y, aabb_min_z).divideScalar(1000)
+      // let aabb_max_x = arr.getFloat32(12, true)
+      // let aabb_max_y = arr.getFloat32(16, true)
+      // let aabb_max_z = arr.getFloat32(20, true)
+      // let aabb_max = new Vector3(aabb_max_x, aabb_max_y, aabb_max_z).divideScalar(1000)
 
-      console.log(`Star array ${i}: AABB min(${aabb_min_x}, ${aabb_min_y}, ${aabb_min_z}) max(${aabb_max_x}, ${aabb_max_y}, ${aabb_max_z})`)
+      // console.log(`Star array ${i}: AABB min(${aabb_min_x}, ${aabb_min_y}, ${aabb_min_z}) max(${aabb_max_x}, ${aabb_max_y}, ${aabb_max_z})`)
       let starArr = new Float32Array(arr.buffer)
 
       const geometry = new BufferGeometry()
@@ -143,7 +143,7 @@ export class Galaxy {
 
       // mesh
       const mesh = new Points(geometry, material);
-      mesh.frustumCulled = true
+      mesh.frustumCulled = false
       this.scene.add(mesh);
       this.requestRenderIfNotRequested()
     }
