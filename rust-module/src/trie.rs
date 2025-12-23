@@ -695,6 +695,7 @@ fn compress_labels(labels: &[Vec<u8>]) -> (Vec<u8>, Vec<(u32, u32)>) {
     }
 
     let num_uniques = unique_strings.len();
+    println!("Compressing {} labels into {} unique strings", labels.len(), num_uniques);
     if num_uniques == 0 {
         return (Vec::new(), vec![(0, 0); labels.len()]);
     }
@@ -961,14 +962,26 @@ fn compress_labels(labels: &[Vec<u8>]) -> (Vec<u8>, Vec<(u32, u32)>) {
     // 4. Finalize Pointers
     let mut result_mappings = Vec::with_capacity(labels.len());
 
+    let mut count_under_16bit = 0;
     for &unique_id in &label_to_unique_id {
         let (root_id, offset_in_root) = step2_resolution[unique_id];
         let root_base = *root_final_offsets.get(&root_id).unwrap_or(&0);
         let final_offset = root_base + offset_in_root;
         let len = unique_strings[unique_id].len();
+        if final_offset + (len as u32) < 65536 {
+            count_under_16bit += 1;
+        }
 
         result_mappings.push((final_offset, len as u32));
     }
+
+    println!(
+        "{} / {} labels fit within 16-bit offsets after compression",
+        count_under_16bit,
+        result_mappings.len()
+    );
+
+    dbg!(super_buffer.len());
 
     (super_buffer, result_mappings)
 }

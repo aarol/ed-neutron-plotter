@@ -742,9 +742,8 @@ checksum = "19f58d7b0190c7f12df7e8be6b79767a0836059159811b869d5ab55721fe14d0"
 
 [[package]]
 name = "succinct"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7798b62081a999bcf090b2f220fee8845dd1c6ffeb17e1bc6ca783825f62a418"
+version = "0.5.3-alpha.0"
+source = "git+https://github.com/tov/succinct-rs#b394d4d11526bf52c312519b844b1d90b01f6d2a"
 dependencies = [
  "byteorder",
  "num-traits",

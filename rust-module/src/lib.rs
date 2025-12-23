@@ -1,15 +1,38 @@
 pub mod fast_json_parser;
 pub mod kdtree;
+mod louds_trie;
+mod ordered_f32;
 pub mod plotter;
 pub mod system;
 pub mod trie;
 pub mod utils;
-mod ordered_f32;
-mod louds_trie;
 
 use wasm_bindgen::prelude::*;
 
 use crate::{fast_json_parser::JsonCoords, system::Coords, trie::LoudsTrie};
+
+#[wasm_bindgen]
+pub struct Searcher {
+    trie: LoudsTrie,
+}
+
+#[wasm_bindgen]
+impl Searcher {
+    #[wasm_bindgen(constructor)]
+    pub fn new(trie_data: &[u8]) -> Searcher {
+        let trie = LoudsTrie::from(trie_data);
+        Searcher { trie }
+    }
+
+    #[wasm_bindgen]
+    pub fn suggest_words(&self, prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
+        self.trie
+            .suggest(prefix, num_suggestions)
+            .into_iter()
+            .map(|s| JsValue::from_str(s.as_str()))
+            .collect()
+    }
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -23,28 +46,6 @@ extern "C" {
 #[wasm_bindgen]
 pub fn init() {
     utils::set_panic_hook();
-}
-
-#[wasm_bindgen]
-pub fn greet() {
-    alert("Hello, rust-module!");
-}
-
-#[wasm_bindgen]
-pub fn suggest_words(trie: &[u8], prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
-    let trie = LoudsTrie::from(trie);
-
-    trie.suggest(prefix, num_suggestions)
-        .into_iter()
-        .map(|s| JsValue::from_str(s.as_str()))
-        .collect()
-}
-
-#[wasm_bindgen]
-pub fn contains(trie: &[u8], prefix: &str) -> JsValue {
-    let trie = LoudsTrie::from(trie);
-
-    JsValue::from_bool(trie.find(prefix).is_some())
 }
 
 #[wasm_bindgen]
@@ -80,10 +81,10 @@ pub fn find_route(
 
     let stars = stars.windows(3).map(Coords::from_slice).collect::<Vec<_>>();
 
-    let cb = |report: plotter::Report| {
+    let report_callback = |report: plotter::Report| {
         let report = serde_wasm_bindgen::to_value(&report).unwrap();
         let _ = report_callback.call1(&JsValue::NULL, &report);
     };
 
-    plotter::plot(start, end, &stars, &ship, kdtree, cb)
+    plotter::plot(start, end, &stars, &ship, kdtree, report_callback)
 }
