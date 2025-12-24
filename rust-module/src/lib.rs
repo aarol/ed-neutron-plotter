@@ -12,38 +12,49 @@ use crate::{system::Coords, trie::LoudsTrie};
 
 /// Stores the trie and other data needed for autocomplete and plotter
 #[wasm_bindgen]
-pub struct Searcher {
-    trie: LoudsTrie,
-    stars: Vec<Coords>,
+#[derive(Default)]
+pub struct Module {
+    trie: Option<LoudsTrie>,
+    stars: Option<Box<[Coords]>>,
+    kdtree: Option<kdtree::CompactKdTree>,
 }
 
 #[wasm_bindgen]
-impl Searcher {
+impl Module {
     #[wasm_bindgen(constructor)]
-    pub fn new(trie_data: &[u8], stars: &[f32]) -> Searcher {
-        // This is not zero-cost because the succinct data structures need to be initialized
-        let trie = LoudsTrie::from(trie_data);
-        let stars = stars.chunks(3).map(Coords::from_slice).collect::<Vec<_>>();
+    pub fn new() -> Module {
+        Module::default()
+    }
 
-        Searcher { trie, stars }
+    pub fn set_trie(&mut self, trie_data: &[u8]) {
+        self.trie = Some(LoudsTrie::from(trie_data));
+    }
+
+    pub fn set_stars(&mut self, stars: Box<[f32]>) {
+        // Convert flat f32 array to coordinates without copying
+        self.stars = Some(stars.chunks_exact(3).map(Coords::from_slice).collect());
+    }
+
+    pub fn set_kdtree(&mut self, kdtree_data: &[u8]) {
+        self.kdtree = Some(kdtree::CompactKdTree::from_bytes(kdtree_data));
     }
 
     pub fn suggest_words(&self, prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
-        self.trie
-            .suggest(prefix, num_suggestions)
-            .into_iter()
-            .map(|s| JsValue::from_str(s.as_str()))
-            .collect()
+        match self.trie {
+            Some(ref trie) => trie
+                .suggest(prefix, num_suggestions)
+                .into_iter()
+                .map(|s| JsValue::from_str(s.as_str()))
+                .collect(),
+            None => vec![],
+        }
     }
 
     pub fn get_coords_for_star(&self, star_name: &str) -> Option<Coords> {
-        self.trie.find(star_name).map(|index| {
-            let coords = self.stars[index as usize];
-            log(format!("{:?}", self.stars[index as usize - 1]).as_str());
-            log(format!("{:?}", self.stars[index as usize]).as_str());
-            log(format!("{:?}", self.stars[index as usize + 1]).as_str());
-            coords
-        })
+        match (&self.trie, &self.stars) {
+            (Some(trie), Some(stars)) => trie.find(star_name).map(|index| stars[index as usize]),
+            _ => None,
+        }
     }
 }
 

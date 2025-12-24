@@ -112,13 +112,13 @@ impl<'a> Default for KdTreeBuilder<'a> {
 /// A compact, flat KD-tree that only stores indices.
 /// Point coordinates must be provided at query time.
 /// Designed for WASM usage with efficient serialization.
-pub struct CompactKdTree<'a> {
+pub struct CompactKdTree {
     /// Implicit binary tree of point indices
-    tree: &'a [u32],
+    tree: Box<[u32]>,
 }
 
-impl<'a> CompactKdTree<'a> {
-    pub fn new(tree: &'a [u32]) -> Self {
+impl CompactKdTree {
+    pub fn new(tree: Box<[u32]>) -> Self {
         Self { tree }
     }
 
@@ -126,15 +126,17 @@ impl<'a> CompactKdTree<'a> {
     /// Format:
     /// - tree_len: u32
     /// - tree: [u32; tree_len]
-    pub fn from_bytes(data: &'a [u8]) -> Self {
+    pub fn from_bytes(data: &[u8]) -> Self {
         let tree_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
 
         let tree_start = 4;
         let tree_end = tree_start + tree_len * 4;
         let tree_bytes = &data[tree_start..tree_end];
 
-        let tree: &[u32] =
+        let tree_slice: &[u32] =
             unsafe { std::slice::from_raw_parts(tree_bytes.as_ptr() as *const u32, tree_len) };
+        
+        let tree: Box<[u32]> = tree_slice.to_vec().into_boxed_slice();
 
         Self { tree }
     }
@@ -166,11 +168,6 @@ impl<'a> CompactKdTree<'a> {
     /// Size in bytes (just the tree structure).
     pub fn size_in_bytes(&self) -> usize {
         self.tree.len() * 4
-    }
-
-    /// Raw tree array access.
-    pub fn tree(&self) -> &[u32] {
-        self.tree
     }
 
     /// Find the nearest neighbor to the query point.
@@ -410,7 +407,7 @@ mod tests {
     fn test_empty_tree() {
         let builder = KdTreeBuilder::new();
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
 
         assert!(kdtree.is_empty());
         assert!(kdtree.nearest(c(0.0, 0.0, 0.0), &[]).is_none());
@@ -421,7 +418,7 @@ mod tests {
         let builder = KdTreeBuilder::from_points(&[[1.0, 2.0, 3.0]]);
 
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
 
         let points = make_coords(&[[1.0, 2.0, 3.0]]);
 
@@ -452,7 +449,7 @@ mod tests {
         ];
 
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
         let points = make_coords(&raw_points);
 
         // Query near origin
@@ -482,7 +479,7 @@ mod tests {
         ];
         let builder = KdTreeBuilder::from_points(raw_points);
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
         let points = make_coords(raw_points);
 
         // Radius 1.5 should include first 2 points
@@ -507,7 +504,7 @@ mod tests {
         let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
         let points = make_coords(&raw_points);
 
         // Get up to 3 within radius 5
@@ -521,7 +518,7 @@ mod tests {
 
         let builder = KdTreeBuilder::from_points(raw_points);
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
 
         let points = make_coords(raw_points);
 
@@ -553,7 +550,7 @@ mod tests {
         let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
         let points = make_coords(&raw_points);
 
         // Test nearest neighbor at various positions
@@ -576,7 +573,7 @@ mod tests {
         let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
         let points = make_coords(&raw_points);
 
         let (idx, _) = kdtree.nearest(c(-0.9, -0.9, -0.9), &points).unwrap();
@@ -597,7 +594,7 @@ mod tests {
         let builder = KdTreeBuilder::from_points(&raw_points);
 
         let tree = builder.build();
-        let kdtree = CompactKdTree::new(&tree);
+        let kdtree = CompactKdTree::new(tree.into_boxed_slice());
 
         let size = kdtree.size_in_bytes();
         // Tree has at least 100 entries * 4 bytes

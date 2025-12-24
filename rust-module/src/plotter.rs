@@ -4,7 +4,7 @@ use bitvec::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{kdtree::CompactKdTree, log_u32, ordered_f32::OrderedF32, system::Coords};
+use crate::{kdtree::CompactKdTree, ordered_f32::OrderedF32, system::Coords};
 
 pub struct Ship {
     pub fuel_tank_size: f32,
@@ -83,7 +83,7 @@ pub fn plot(
         range + start_pos.dist(&end_pos).max(0.0)
     };
 
-    let range = 0.3;
+    let range = 0.27;
     let mut depth = 0;
     let mut dist_to_end = start_coords.dist(&end_coords);
     let mut end_found = false;
@@ -118,14 +118,14 @@ pub fn plot(
         }
 
         let working_queue = std::mem::take(&mut queue);
-        log_u32(working_queue.len() as u32);
+        // log_u32(working_queue.len() as u32);
         for (fuel_available, i) in working_queue {
             // let mut range = ship.jump_range(*fuel_available, 4.0);
             let coords = stars[i as usize];
 
 
             let neighbours = kdtree.nearest_n_within(coords, stars, range, beam_width);
-            log_u32(neighbours.len() as u32);
+            // log_u32(neighbours.len() as u32);
             let mut buffer = vec![];
 
             for (ni, _dist_sq) in neighbours {

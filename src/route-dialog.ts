@@ -209,9 +209,14 @@ export class RouteDialog {
   private async handleGenerate(): Promise<void> {
 
     const from = this.fromSearchBox.getValue().trim();
-    const fromCoords = await api.getStarCoords(from);
     const to = this.toSearchBox.getValue().trim();
+    const fromCoords = await api.getStarCoords(from);
     const toCoords = await api.getStarCoords(to);
+    if (!fromCoords || !toCoords) { 
+      console.error("Could not get coordinates for stars", from, to);
+      return;
+    }
+
     const config: RouteConfig = {
       from: {
         name: from,

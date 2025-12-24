@@ -100,7 +100,7 @@ fn main() -> io::Result<()> {
     }
 
     let kdtree_indices = kdtree::KdTreeBuilder::from_points(&sorted_coords).build();
-    let kdtree = kdtree::CompactKdTree::new(&kdtree_indices);
+    let kdtree = kdtree::CompactKdTree::new(kdtree_indices.into_boxed_slice());
 
     let mut kdtree_file = std::fs::File::create(out_dir.join("star_kdtree.bin"))?;
     kdtree_file.write_all(&kdtree.to_bytes())?;

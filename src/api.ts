@@ -1,4 +1,7 @@
 import { Vector3 } from "three";
+import * as wasm from "../rust-module/pkg";
+
+export const wasmModule = new wasm.Module();
 
 export type SystemInfoResponse = {
   name: string
@@ -11,11 +14,30 @@ export interface ApiCoords {
   z: number
 }
 
-export function vec3FromCoords(coords: ApiCoords): Vector3 {
+export function vec3fromCoords(coords: ApiCoords): Vector3 {
   return new Vector3(coords.x, coords.y, coords.z);
 }
 
+function wasmCoordsToCoordsObj(coords: wasm.Coords): ApiCoords {
+  return {
+    x: coords.x,
+    y: coords.y,
+    z: coords.z,
+  }
+}
+
 async function getStarCoords(star: string): Promise<ApiCoords | null> {
+  // First try to get coordinates from the wasm module's searcher
+  let wasmCoords = wasmModule.get_coords_for_star(star);
+  if (wasmCoords) {
+    return wasmCoordsToCoordsObj(wasmCoords);
+  }
+
+  // If not found, fall back to the API
+  return await getStarCoordsFromApi(star);
+}
+
+async function getStarCoordsFromApi(star: string): Promise<ApiCoords | null> {
   const apiUrl = "https://www.edsm.net/api-v1/system"
 
   const response = await fetch(`${apiUrl}?systemName=${encodeURI(star)}&showCoordinates=1`);

@@ -4,7 +4,7 @@ import { Galaxy } from "./galaxy";
 import { RouteDialog } from "./route-dialog";
 import * as wasm from "../rust-module/pkg";
 import { Vector3 } from "three/webgpu";
-import { api } from "./api";
+import { api, wasmModule as wasmModule } from "./api";
 
 async function main() {
   const galaxy = new Galaxy();
@@ -14,11 +14,10 @@ async function main() {
 
   let route_kdtree: undefined | ArrayBuffer = undefined;
   let starPosData: undefined | Float32Array = undefined;
-  let searcher: wasm.Searcher | undefined = undefined;
 
   function onSuggest(prefix: string) {
-    if (searcher) {
-      return searcher.suggest_words(prefix, 10) as string[];
+    if (wasmModule) {
+      return wasmModule.suggest_words(prefix, 10) as string[];
     }
     return [];
   }
@@ -54,7 +53,7 @@ async function main() {
   const searchBox = new SearchBox({
     placeholder: "Enter target star..",
     onSearch: async (query: string) => {
-      const pos = searcher?.get_coords_for_star(query) ?? await api.getStarCoords(query);
+      const pos = wasmModule?.get_coords_for_star(query) ?? await api.getStarCoords(query);
       if (pos) {
         if (!(pos instanceof wasm.Coords)) {
           console.log("Fetched star coordinates from API:", pos);
@@ -75,15 +74,18 @@ async function main() {
 
   searchBox.mount(document.body);
 
-  Promise.all([
-    fetch("/data/search_trie.bin").then(res => res.arrayBuffer()),
-    fetch("/data/neutron_stars0.bin").then(res => res.arrayBuffer()),
-  ])
-    .then(([trieBuffer, starBuffer]) => {
-      const starCoords = new Float32Array(starBuffer);
-      searcher = new wasm.Searcher(new Uint8Array(trieBuffer), starCoords);
+  fetch("/data/neutron_stars0.bin")
+    .then(res => res.arrayBuffer())
+    .then(starBuffer => {
+      wasmModule.set_stars(new Float32Array(starBuffer))
       galaxy.loadStars([new DataView(starBuffer)]);
-      console.log("Search trie and star positions loaded.");
+      console.log("Star data loaded.");
+    })
+  fetch("/data/search_trie.bin")
+    .then(res => res.arrayBuffer())
+    .then(trieBuffer => {
+      wasmModule.set_trie(new Uint8Array(trieBuffer))
+      console.log("Search trie loaded.");
     });
 }
 main();

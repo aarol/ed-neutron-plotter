@@ -14,7 +14,7 @@ use succinct::{
 /// The labels on the edges are stored separately, with 1-byte labels in a simple array
 /// and longer labels stored as (u32) offsets/lengths into a label store.
 ///
-/// Currently, the largest space bottleneck is the
+/// Currently, the largest space bottleneck is the complex labels array
 pub struct LoudsTrie {
     bits: succinct::BitVector<u64>,
     bits_select: succinct::select::BinSearchSelect<JacobsonRank<BitVector<u64>>>,

@@ -133,7 +133,7 @@ export class Galaxy {
       const geometry = new BufferGeometry()
       geometry.setAttribute('position', new BufferAttribute(starArr, 3))
 
-      const colorA = uniform(color('#5900ff'));
+      const colorA = uniform(color('#246acb'));
 
       const material = new PointsNodeMaterial({
         blending: AdditiveBlending,
