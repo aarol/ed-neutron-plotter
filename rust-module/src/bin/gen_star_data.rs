@@ -1,7 +1,9 @@
-use std::io::{self, Read, Write};
+use std::{
+    collections::BTreeSet,
+    io::{self, Read, Write},
+};
 
-use rayon::slice::ParallelSliceMut;
-use rust_module::{fast_json_parser::SystemParser, kdtree, system::Coords, trie::LoudsTrie};
+use rust_module::{fast_json_parser::SystemParser, kdtree, system::{Coords, System}, trie::LoudsTrie};
 
 #[allow(dead_code)]
 fn analyze() -> io::Result<()> {
@@ -49,75 +51,52 @@ fn main() -> io::Result<()> {
     let out_dir = std::path::Path::new("../public/data");
     std::fs::create_dir_all(out_dir)?;
 
-    let neutrons = std::fs::File::open("systems_neutron.json")?;
+    let neutrons_file = std::fs::File::open("systems_neutron.json")?;
+    let regular_systems_file = std::fs::File::open("systems_1day.json")?;
 
-    // let systems = std::fs::File::open("systems_1day.json")?;
+    let mut system_set = BTreeSet::new();
 
-    let mut coords = vec![];
-    let mut star_names = vec![];
-
-    let parser = SystemParser::new(neutrons)?;
-
-    // let parser2 = SystemParser::new(systems)?;
+    let parser = SystemParser::new(neutrons_file)?;
+    let parser2 = SystemParser::new(regular_systems_file)?;
 
     let mut count = 0;
-    parser.for_each(|name, coord| {
+
+    parser
+    .chain(parser2)
+    .for_each(|(name, coord)| {
         if count % 100000 == 0 {
             println!("Processing line {}", count);
         }
         count += 1;
 
-        // The coordinates are in light years, three.js doesn't like such huge distances
+        // The coordinates are in light years (+-30k), three.js doesn't like such huge distances
         // This will reduce the scale to max [-100, 100] in each axis
-        coords.push(Coords::new(
+        // the EDSM api also uses this scale
+        let coords = Coords::new(
             -(coord.x() / 1000.0),
             coord.y() / 1000.0,
             coord.z() / 1000.0,
-        ));
+        );
 
-        star_names.push(name.to_owned());
-    })?;
-
-    // parser2.for_each(|name, _coords| {
-    //     if count % 100000 == 0 {
-    //         println!("Processing line {}", count);
-    //     }
-    //     count += 1;
-
-    // Don't show these yet
-    // stars.push(Star::new(
-    //     (coords.x / 1000.0) as f32,
-    //     (coords.y / 1000.0) as f32,
-    //     (coords.z / 1000.0) as f32,
-    // ));
-
-    //     trie.insert(name);
-    // })?;
+        system_set.insert(System {name: name.to_owned(), coords});
+    });
 
     // Create (name, original_index) pairs and sort by name
     // so that we can remap star coordinates from original order to trie order
     // this way, the trie does not need to store the coordinate indices explicitly
-    let mut indexed_names: Vec<(usize, String)> = star_names
-        .into_iter()
-        .enumerate()
+    let str_keys: Vec<&str> = system_set
+        .iter()
+        .map(|system| system.name.as_str())
         .collect();
-    
-    println!("Sorting star names..");
-    indexed_names.par_sort_unstable_by(|a, b| a.1.cmp(&b.1));
-    
-    let str_keys: Vec<&str> = indexed_names.iter().map(|(_, name)| name.as_str()).collect();
     let (trie, coords_indices) = LoudsTrie::new(&str_keys);
 
-    let star_coords: Vec<[f32; 3]> = coords.iter().map(|s| s.to_slice()).collect();
+    let star_coords: Vec<[f32; 3]> = system_set.iter().map(|s| s.coords.to_slice()).collect();
 
     // Map from trie order to original coord order
-    // coords_indices[sorted_idx] = trie_terminal_index
-    // indexed_names[sorted_idx].0 = original_index
     println!("Reassigning star coords according to trie..");
     let mut sorted_coords = vec![[0.0; 3]; star_coords.len()];
     for (sorted_idx, &trie_idx) in coords_indices.iter().enumerate() {
-        let original_idx = indexed_names[sorted_idx].0;
-        sorted_coords[trie_idx] = star_coords[original_idx];
+        sorted_coords[trie_idx] = star_coords[sorted_idx];
     }
 
     let kdtree_indices = kdtree::KdTreeBuilder::from_points(&sorted_coords).build();

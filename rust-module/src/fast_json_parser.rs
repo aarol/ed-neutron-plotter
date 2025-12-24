@@ -6,6 +6,7 @@ use crate::system::Coords;
 pub struct SystemParser<R: Read> {
     reader: BufReader<R>,
     buffer: String,
+    first_line: bool,
 }
 
 impl<R: Read + Seek> SystemParser<R> {
@@ -16,36 +17,8 @@ impl<R: Read + Seek> SystemParser<R> {
         Ok(Self {
             reader: BufReader::new(reader),
             buffer: String::with_capacity(512),
+            first_line: true,
         })
-    }
-
-    pub fn for_each<F>(mut self, mut f: F) -> std::io::Result<()>
-    where
-        F: FnMut(&str, Coords),
-    {
-        let mut first_line = true;
-
-        loop {
-            self.buffer.clear();
-
-            match self.reader.read_line(&mut self.buffer) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    // Skip the first line (we already seeked past the '[')
-                    if first_line {
-                        first_line = false;
-                        continue;
-                    }
-
-                    if let Some((name, coords)) = Self::parse_line(&self.buffer) {
-                        f(name, coords);
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(())
     }
 
     fn parse_line(buffer: &str) -> Option<(&str, Coords)> {
@@ -105,5 +78,32 @@ impl<R: Read + Seek> SystemParser<R> {
         };
 
         Some((name, coords))
+    }
+}
+
+impl<R: Read + Seek> Iterator for SystemParser<R> {
+    type Item = (String, Coords);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            self.buffer.clear();
+
+            match self.reader.read_line(&mut self.buffer) {
+                Ok(0) => return None, // EOF
+                Ok(_) => {
+                    // Skip the first line (we already seeked past the '[')
+                    if self.first_line {
+                        self.first_line = false;
+                        continue;
+                    }
+
+                    if let Some((name, coords)) = Self::parse_line(&self.buffer) {
+                        return Some((name.to_string(), coords));
+                    }
+                    // Continue loop if line couldn't be parsed
+                }
+                Err(_) => return None,
+            }
+        }
     }
 }

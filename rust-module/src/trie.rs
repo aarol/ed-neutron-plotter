@@ -112,7 +112,7 @@ impl LoudsTrie {
 
         queue.push_back(&root_compressed);
         terminals.push_bit(root_compressed.is_terminal);
-        let mut curr_terminal_index = 1;
+        let mut curr_terminal_index = 0;
 
         while let Some(node) = queue.pop_front() {
             for (label, child) in &node.children {
@@ -298,7 +298,6 @@ impl LoudsTrie {
         let mut curr_node_idx = 0;
         let mut key_bytes = key.as_bytes();
 
-        // 2. Traverse down
         while !key_bytes.is_empty() {
             // Get the starting bit-index where the children of `curr_node_idx` are stored.
             let mut scan_idx = self.first_child(curr_node_idx)?; // No children → key not found
@@ -323,11 +322,11 @@ impl LoudsTrie {
             }
         }
 
-        // 3. Final Check: Is this node a valid end-of-word?
+        // Final Check: Is this node a valid end-of-word?
         // If so, return its terminal rank1 (uniquely identifies the key)
         self.is_terminal(curr_node_idx).then(|| {
             let node_id = self.bits_select.rank1(curr_node_idx);
-            self.terminals_rank.rank1(node_id - 1)
+            self.terminals_rank.rank1(node_id - 1) - 1 // -1 to make it 0-based
         })
     }
 

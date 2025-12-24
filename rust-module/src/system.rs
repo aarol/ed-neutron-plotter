@@ -15,6 +15,27 @@ pub struct System {
     // date: String,
 }
 
+impl PartialOrd for System {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.name.cmp(&other.name))   
+    }
+}
+
+impl PartialEq for System {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for System {
+}
+
+impl Ord for System {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
 #[wasm_bindgen]
 #[repr(transparent)]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
