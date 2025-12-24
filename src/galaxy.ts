@@ -2,6 +2,7 @@ import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import { color, float, uniform, vec4 } from 'three/tsl';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Scene, SphereGeometry, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
+import { RouteLine } from './route-line';
 
 
 export class Galaxy {
@@ -15,6 +16,7 @@ export class Galaxy {
   controls = new OrbitControls(this.camera, this.renderer.domElement)
   targetPosition = new Vector3(0, 0, 0)
   currentPosition = this.targetPosition.clone()
+  routeLine = new RouteLine(this.scene);
 
   focusSphere!: Mesh
 
@@ -74,6 +76,11 @@ export class Galaxy {
   setTarget(target: Vector3) {
     this.targetPosition = target
     this.focusSphere.position.copy(this.targetPosition)
+    this.requestRenderIfNotRequested()
+  }
+
+  setRoutePoints(points: Vector3[]) {
+    this.routeLine.updatePoints(points);
     this.requestRenderIfNotRequested()
   }
 

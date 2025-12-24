@@ -4,7 +4,7 @@ use bitvec::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{kdtree::CompactKdTree, log, ordered_f32::OrderedF32, system::Coords};
+use crate::{kdtree::CompactKdTree, ordered_f32::OrderedF32, system::Coords};
 
 pub struct Ship {
     pub fuel_tank_size: f32,
@@ -44,9 +44,9 @@ impl Ship {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Report {
-    curr_best_route: Vec<Coords>,
-    distance: f32,
-    depth: u32,
+    pub curr_best_route: Vec<Coords>,
+    pub distance: f32,
+    pub depth: u32,
 }
 
 pub fn plot(

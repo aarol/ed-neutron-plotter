@@ -35,9 +35,12 @@ async function main() {
       console.log('Route configuration:', routeConfig);
 
       const res = api.findRoute(routeConfig.from.coords, routeConfig.to.coords, (report) => {
-        console.log("Route finding report:", report);
+        const points = report.curr_best_route.map((coord: any) => new Vector3(coord[0], coord[1], coord[2]));
+        galaxy.setRoutePoints(points);
       })
-      console.log("Route result:", res);
+      if (res) {
+        galaxy.setRoutePoints(res.map((coord) => new Vector3(coord.x, coord.y, coord.z)));
+      }
     }
   };
 
