@@ -59,6 +59,15 @@ async function getStarCoordsFromApi(star: string): Promise<ApiCoords | null> {
   }
 }
 
+function findRoute(start: ApiCoords, end: ApiCoords, reportCallback: (report: any) => void): ApiCoords[] | undefined {
+  const wasmStart = new wasm.Coords(start.x, start.y, start.z);
+  const wasmEnd = new wasm.Coords(end.x, end.y, end.z);
+
+  const result = wasmModule.find_route(wasmStart, wasmEnd, reportCallback);
+  return result?.map(wasmCoordsToCoordsObj);
+}
+
 export const api = {
   getStarCoords,
+  findRoute,
 }

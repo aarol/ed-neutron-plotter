@@ -39,13 +39,9 @@ impl Module {
         self.kdtree = Some(kdtree::CompactKdTree::from_bytes(kdtree_data));
     }
 
-    pub fn suggest_words(&self, prefix: &str, num_suggestions: usize) -> Vec<JsValue> {
+    pub fn suggest_words(&self, prefix: &str, num_suggestions: usize) -> Vec<String> {
         match self.trie {
-            Some(ref trie) => trie
-                .suggest(prefix, num_suggestions)
-                .into_iter()
-                .map(|s| JsValue::from_str(s.as_str()))
-                .collect(),
+            Some(ref trie) => trie.suggest(prefix, num_suggestions).into_iter().collect(),
             None => vec![],
         }
     }
@@ -55,6 +51,46 @@ impl Module {
             (Some(trie), Some(stars)) => trie.find(star_name).map(|index| stars[index as usize]),
             _ => None,
         }
+    }
+
+    #[wasm_bindgen]
+    pub fn find_route(
+        &self,
+        start: Coords,
+        end: Coords,
+        report_callback: &js_sys::Function,
+    ) -> Result<Vec<Coords>, JsValue> {
+        log(&format!("Finding route from ({}) to ({})", start, end));
+
+        let ship = plotter::Ship {
+            fuel_tank_size: 32.0,
+            jump_range: 80.0,
+            max_fuel_per_jump: 4.0,
+            base_mass: 100.0,
+            fsd_optimized_mass: 50.0,
+            fsd_boost_factor: 1.2,
+            fsd_rating_val: 5.0,
+            fsd_class_val: 3.0,
+        };
+
+        let report_callback = |report: plotter::Report| {
+            let report = serde_wasm_bindgen::to_value(&report).unwrap();
+            report_callback.call1(&JsValue::NULL, &report).unwrap();
+        };
+
+        let (stars, kdtree) = match (&self.stars, &self.kdtree) {
+            (Some(stars), Some(kdtree)) => (stars, kdtree),
+            _ => return Err(JsValue::from_str("Stars or KDTree data not set in module")),
+        };
+
+        Ok(plotter::plot(
+            start,
+            end,
+            stars,
+            &ship,
+            kdtree,
+            report_callback,
+        ))
     }
 }
 
@@ -70,42 +106,4 @@ extern "C" {
 #[wasm_bindgen]
 pub fn init() {
     utils::set_panic_hook();
-}
-
-#[wasm_bindgen]
-pub fn find_route(
-    kdtree_bytes: &[u8],
-    stars: &[f32],
-    start: JsValue,
-    end: JsValue,
-    report_callback: &js_sys::Function,
-) -> Vec<Coords> {
-    let kdtree = kdtree::CompactKdTree::from_bytes(kdtree_bytes);
-
-    log_u32(kdtree.size() as u32);
-
-    let start: Coords = serde_wasm_bindgen::from_value(start).unwrap();
-    let end: Coords = serde_wasm_bindgen::from_value(end).unwrap();
-
-    log(&format!("Finding route from ({}) to ({})", start, end));
-
-    let ship = plotter::Ship {
-        fuel_tank_size: 32.0,
-        jump_range: 80.0,
-        max_fuel_per_jump: 4.0,
-        base_mass: 100.0,
-        fsd_optimized_mass: 50.0,
-        fsd_boost_factor: 1.2,
-        fsd_rating_val: 5.0,
-        fsd_class_val: 3.0,
-    };
-
-    let stars = stars.windows(3).map(Coords::from_slice).collect::<Vec<_>>();
-
-    let report_callback = |report: plotter::Report| {
-        let report = serde_wasm_bindgen::to_value(&report).unwrap();
-        let _ = report_callback.call1(&JsValue::NULL, &report);
-    };
-
-    plotter::plot(start, end, &stars, &ship, kdtree, report_callback)
 }

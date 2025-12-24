@@ -12,12 +12,9 @@ async function main() {
 
   wasm.init(); // set panic hook, might need to move this somewhere else
 
-  let route_kdtree: undefined | ArrayBuffer = undefined;
-  let starPosData: undefined | Float32Array = undefined;
-
   function onSuggest(prefix: string) {
     if (wasmModule) {
-      return wasmModule.suggest_words(prefix, 10) as string[];
+      return wasmModule.suggest_words(prefix, 10);
     }
     return [];
   }
@@ -37,23 +34,17 @@ async function main() {
     if (routeConfig) {
       console.log('Route configuration:', routeConfig);
 
-      if (!route_kdtree) {
-        console.log("Fetching route_kdtree.bin..")
-        route_kdtree = await fetch("data/star_kdtree.bin").then(r => r.arrayBuffer())
-      }
-
-      const res = wasm.find_route(new Uint8Array(route_kdtree!), starPosData!, routeConfig.from.coords, routeConfig.to.coords,
-        (report: any) => {
-          console.log(report);
-        })
-      console.log(res)
+      const res = api.findRoute(routeConfig.from.coords, routeConfig.to.coords, (report) => {
+        console.log("Route finding report:", report);
+      })
+      console.log("Route result:", res);
     }
   };
 
   const searchBox = new SearchBox({
     placeholder: "Enter target star..",
     onSearch: async (query: string) => {
-      const pos = wasmModule?.get_coords_for_star(query) ?? await api.getStarCoords(query);
+      const pos = await api.getStarCoords(query)
       if (pos) {
         if (!(pos instanceof wasm.Coords)) {
           console.log("Fetched star coordinates from API:", pos);
@@ -86,6 +77,13 @@ async function main() {
     .then(trieBuffer => {
       wasmModule.set_trie(new Uint8Array(trieBuffer))
       console.log("Search trie loaded.");
+    });
+
+  fetch("/data/star_kdtree.bin")
+    .then(res => res.arrayBuffer())
+    .then(kdtreeBuffer => {
+      wasmModule.set_kdtree(new Uint8Array(kdtreeBuffer))
+      console.log("Star KDTree loaded.");
     });
 }
 main();

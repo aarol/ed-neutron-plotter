@@ -17,7 +17,7 @@ pub struct System {
 
 impl PartialOrd for System {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))   
+        Some(self.name.cmp(&other.name))
     }
 }
 
@@ -27,8 +27,7 @@ impl PartialEq for System {
     }
 }
 
-impl Eq for System {
-}
+impl Eq for System {}
 
 impl Ord for System {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -42,9 +41,6 @@ impl Ord for System {
 pub struct Coords([f32; 3]);
 
 impl Coords {
-    pub fn new(x: f32, y: f32, z: f32) -> Self {
-        Coords([x, y, z])
-    }
     pub fn from_slice(slice: &[f32]) -> Self {
         Coords([slice[0], slice[1], slice[2]])
     }
@@ -71,6 +67,10 @@ impl Coords {
 
 #[wasm_bindgen]
 impl Coords {
+    #[wasm_bindgen(constructor)]
+    pub fn new(x: f32, y: f32, z: f32) -> Self {
+        Coords([x, y, z])
+    }
     #[wasm_bindgen(getter)]
     pub fn x(&self) -> f32 {
         self.0[0]
