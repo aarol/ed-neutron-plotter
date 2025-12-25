@@ -17,6 +17,7 @@
     "vite-plugin-wasm": "^3.5.0"
   },
   "dependencies": {
+    "comlink": "^4.4.2",
     "three": "^0.181.2"
   }
 }

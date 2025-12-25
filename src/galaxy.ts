@@ -2,7 +2,7 @@ import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import { color, float, uniform, vec4 } from 'three/tsl';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Scene, SphereGeometry, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
-import { RouteLine } from './route-line';
+import { LinePoints } from './line-points';
 
 
 export class Galaxy {
@@ -16,7 +16,7 @@ export class Galaxy {
   controls = new OrbitControls(this.camera, this.renderer.domElement)
   targetPosition = new Vector3(0, 0, 0)
   currentPosition = this.targetPosition.clone()
-  routeLine = new RouteLine(this.scene);
+  routeLine = new LinePoints(256, 0xffffff, 0.002);
 
   focusSphere!: Mesh
 
@@ -60,6 +60,7 @@ export class Galaxy {
 
     this.focusSphere = this.createFocusSphere()
     this.scene.add(this.focusSphere)
+    this.scene.add(this.routeLine)
   }
 
   createFocusSphere() {
@@ -79,8 +80,8 @@ export class Galaxy {
     this.requestRenderIfNotRequested()
   }
 
-  setRoutePoints(points: Vector3[]) {
-    this.routeLine.updatePoints(points);
+  setRoutePoints(points: Float32Array) {
+    this.routeLine.update(points);
     this.requestRenderIfNotRequested()
   }
 
@@ -117,7 +118,7 @@ export class Galaxy {
 
   async loadStars(starPositionArrays: DataView[]) {
     console.log('Loading star data...')
-    
+
 
     const count = starPositionArrays.reduce((acc, arr) => acc + arr.byteLength / 12 - 1, 0)
     console.log(`Loaded ${count} stars`)

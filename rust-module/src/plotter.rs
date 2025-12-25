@@ -2,7 +2,6 @@ use core::panic;
 
 use bitvec::prelude::*;
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 
 use crate::{kdtree::CompactKdTree, ordered_f32::OrderedF32, system::Coords};
 
@@ -18,6 +17,7 @@ pub struct Ship {
 }
 
 impl Ship {
+    #[allow(dead_code)]
     fn jump_range(&self, fuel: f32, overcharge_mult: f32) -> f32 {
         let mass = self.base_mass + fuel;
         let fuel_used = self.max_fuel_per_jump.min(fuel) * overcharge_mult;
@@ -42,7 +42,6 @@ impl Ship {
     // }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Report {
     pub curr_best_route: Vec<Coords>,
     pub distance: f32,

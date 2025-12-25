@@ -5,7 +5,6 @@ pub mod plotter;
 pub mod system;
 pub mod trie;
 pub mod utils;
-
 use wasm_bindgen::prelude::*;
 
 use crate::{system::Coords, trie::LoudsTrie};
@@ -59,7 +58,7 @@ impl Module {
         start: Coords,
         end: Coords,
         report_callback: &js_sys::Function,
-    ) -> Result<Vec<Coords>, JsValue> {
+    ) -> Result<Box<[f32]>, JsValue> {
         log(&format!("Finding route from ({}) to ({})", start, end));
 
         let ship = plotter::Ship {
@@ -74,8 +73,20 @@ impl Module {
         };
 
         let report_callback = |report: plotter::Report| {
-            let report = serde_wasm_bindgen::to_value(&report).unwrap();
-            report_callback.call1(&JsValue::NULL, &report).unwrap();
+            let this = &JsValue::NULL;
+            let star_coords: Box<[f32]> = report
+                .curr_best_route
+                .iter()
+                .flat_map(|c| c.to_slice())
+                .collect();
+            report_callback
+                .call3(
+                    this,
+                    &JsValue::from(star_coords),
+                    &JsValue::from(report.distance),
+                    &JsValue::from(report.depth),
+                )
+                .unwrap();
         };
 
         let (stars, kdtree) = match (&self.stars, &self.kdtree) {
@@ -83,14 +94,9 @@ impl Module {
             _ => return Err(JsValue::from_str("Stars or KDTree data not set in module")),
         };
 
-        Ok(plotter::plot(
-            start,
-            end,
-            stars,
-            &ship,
-            kdtree,
-            report_callback,
-        ))
+        let result_coords = plotter::plot(start, end, stars, &ship, kdtree, report_callback);
+
+        Ok(result_coords.iter().flat_map(|c| c.to_slice()).collect())
     }
 }
 
@@ -103,7 +109,7 @@ extern "C" {
     fn log_u32(a: u32);
 }
 
-#[wasm_bindgen]
+// #[wasm_bindgen]
 pub fn init() {
     utils::set_panic_hook();
 }

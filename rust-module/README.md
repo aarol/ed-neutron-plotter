@@ -33,8 +33,8 @@ This will populate public/data/ with the generated star data in binary format.
 
 ## Usage
 
-### Build with `wasm-pack build`
+### Build with `wasm-pack`
 
 ```sh
-wasm-pack build
+wasm-pack build --target web
 ```

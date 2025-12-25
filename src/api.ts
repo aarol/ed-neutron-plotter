@@ -1,8 +1,6 @@
 import { Vector3 } from "three";
 import * as wasm from "../rust-module/pkg";
 
-export const wasmModule = new wasm.Module();
-
 export type SystemInfoResponse = {
   name: string
   coords: ApiCoords
@@ -26,7 +24,7 @@ function wasmCoordsToCoordsObj(coords: wasm.Coords): ApiCoords {
   }
 }
 
-async function getStarCoords(star: string): Promise<ApiCoords | null> {
+async function getStarCoords(wasmModule: wasm.Module,star: string): Promise<ApiCoords | null> {
   // First try to get coordinates from the wasm module's searcher
   let wasmCoords = wasmModule.get_coords_for_star(star);
   if (wasmCoords) {
@@ -59,15 +57,6 @@ async function getStarCoordsFromApi(star: string): Promise<ApiCoords | null> {
   }
 }
 
-function findRoute(start: ApiCoords, end: ApiCoords, reportCallback: (report: any) => void): ApiCoords[] | undefined {
-  const wasmStart = new wasm.Coords(start.x, start.y, start.z);
-  const wasmEnd = new wasm.Coords(end.x, end.y, end.z);
-
-  const result = wasmModule.find_route(wasmStart, wasmEnd, reportCallback);
-  return result?.map(wasmCoordsToCoordsObj);
-}
-
 export const api = {
   getStarCoords,
-  findRoute,
 }

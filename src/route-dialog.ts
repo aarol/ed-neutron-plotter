@@ -1,6 +1,5 @@
 import { SearchBox, type SearchBoxOptions } from "./search";
 import styles from "./route-dialog.module.css";
-import { api } from "./api";
 
 export interface RouteDialogOptions {
   onSuggest: (word: string) => string[];
@@ -8,14 +7,8 @@ export interface RouteDialogOptions {
 }
 
 export interface RouteConfig {
-  from: {
-    name: string;
-    coords: {x: number; y: number; z: number}
-  };
-  to: {
-    name: string;
-    coords: {x: number; y: number; z: number}
-  };
+  from: string;
+  to: string;
   alreadySupercharged: boolean;
 }
 
@@ -210,23 +203,10 @@ export class RouteDialog {
 
     const from = this.fromSearchBox.getValue().trim();
     const to = this.toSearchBox.getValue().trim();
-    const fromCoords = await api.getStarCoords(from);
-    const toCoords = await api.getStarCoords(to);
-    if (!fromCoords || !toCoords) { 
-      console.error("Could not get coordinates for stars", from, to);
-      return;
-    }
+
 
     const config: RouteConfig = {
-      from: {
-        name: from,
-        coords: fromCoords
-      },
-      to: {
-        name: to,
-        coords: toCoords
-      },
-      alreadySupercharged: this.superchargedCheckbox.checked
+      from, to, alreadySupercharged: this.superchargedCheckbox.checked
     };
 
     if (config.from && config.to) {

@@ -1,10 +1,13 @@
 import wasm from "vite-plugin-wasm";
-import topLevelAwait from "vite-plugin-top-level-await";
 
 /** @type {import('vite').UserConfig} */
 export default {
-  plugins: [wasm(), topLevelAwait()],
+  plugins: [wasm()],
   server: {
     allowedHosts: true,
+    headers: {
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin"
+    }
   },
 };
