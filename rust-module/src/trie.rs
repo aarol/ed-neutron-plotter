@@ -95,7 +95,43 @@ impl LoudsTrie {
             }
         }
 
-        let root_compressed = compress(root);
+        let mut root_compressed = compress(root);
+
+        // If the node has a label of length two or three, split it into multiple nodes so that the label length is 1.
+        // This actually saves space since 1-byte labels are stored more compactly.
+        fn decompress_short(node: CompressedNode) -> CompressedNode {
+            let mut new_children = Vec::new();
+
+            for (label, child) in node.children {
+                let decompressed_child = decompress_short(child);
+
+                if label.len() > 1 && label.len() <= 3 {
+                    // Split the label into a chain of single-byte nodes
+                    // Work backwards from the last byte to build the chain
+                    let mut current = decompressed_child;
+
+                    for i in (1..label.len()).rev() {
+                        current = CompressedNode {
+                            id: None,
+                            children: vec![(vec![label[i]], current)],
+                            is_terminal: false,
+                        };
+                    }
+
+                    new_children.push((vec![label[0]], current));
+                } else {
+                    new_children.push((label, decompressed_child));
+                }
+            }
+
+            CompressedNode {
+                id: node.id,
+                children: new_children,
+                is_terminal: node.is_terminal,
+            }
+        }
+
+        root_compressed = decompress_short(root_compressed);
 
         // 3. BFS to generate LOUDS bits and Labels
         let mut bits = BitVector::new();
