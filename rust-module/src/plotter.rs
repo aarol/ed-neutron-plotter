@@ -23,9 +23,7 @@ impl Ship {
         let fuel_used = self.max_fuel_per_jump.min(fuel) * overcharge_mult;
         let opt_mass = self.fsd_optimized_mass * self.fsd_boost_factor;
 
-        opt_mass
-            * ((1000. * fuel_used) / self.fsd_rating_val).powf(1. / self.fsd_class_val)
-            / mass
+        opt_mass * ((1000. * fuel_used) / self.fsd_rating_val).powf(1. / self.fsd_class_val) / mass
     }
 
     // fn fuel_cost_for_jump(
@@ -126,7 +124,6 @@ pub fn plot(
         for (fuel_available, i) in working_queue {
             // let mut range = ship.jump_range(*fuel_available, 4.0);
             let coords = stars[i as usize];
-
 
             let neighbours = kdtree.nearest_n_within(coords, stars, range, beam_width);
             // log_u32(neighbours.len() as u32);

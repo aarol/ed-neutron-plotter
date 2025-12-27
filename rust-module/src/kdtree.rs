@@ -135,7 +135,7 @@ impl CompactKdTree {
 
         let tree_slice: &[u32] =
             unsafe { std::slice::from_raw_parts(tree_bytes.as_ptr() as *const u32, tree_len) };
-        
+
         let tree: Box<[u32]> = tree_slice.to_vec().into_boxed_slice();
 
         Self { tree }

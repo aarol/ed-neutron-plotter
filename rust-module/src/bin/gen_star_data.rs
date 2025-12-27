@@ -3,7 +3,12 @@ use std::{
     io::{self, Read, Write},
 };
 
-use rust_module::{fast_json_parser::SystemParser, kdtree, system::{Coords, System}, trie::LoudsTrie};
+use rust_module::{
+    fast_json_parser::SystemParser,
+    kdtree,
+    system::{Coords, System},
+    trie::LoudsTrie,
+};
 
 #[allow(dead_code)]
 fn analyze() -> io::Result<()> {
@@ -62,25 +67,28 @@ fn main() -> io::Result<()> {
     let mut count = 0;
 
     parser
-    .chain(parser2)
-    .for_each(|(name, coord)| {
-        if count % 100000 == 0 {
-            println!("Processing line {}", count);
-        }
-        count += 1;
+        .chain(parser2) //comment to only process neutron stars
+        .for_each(|(name, coord)| {
+            if count % 100000 == 0 {
+                println!("Processing line {}", count);
+            }
+            count += 1;
 
-        // The coordinates are in light years (+-30k), three.js doesn't like such huge distances
-        // This will reduce the scale to max [-100, 100] in each axis
-        // the EDSM api also uses this scale
-        let coords = Coords::new(
-            -(coord.x() / 1000.0),
-            coord.y() / 1000.0,
-            coord.z() / 1000.0,
-        );
+            // The coordinates are in light years (+-30k), three.js doesn't like such huge distances
+            // This will reduce the scale to max [-100, 100] in each axis
+            // the EDSM api also uses this scale
+            let coords = Coords::new(
+                -(coord.x() / 1000.0),
+                coord.y() / 1000.0,
+                coord.z() / 1000.0,
+            );
 
-        system_set.insert(System {name: name.to_owned(), coords});
-    });
-
+            system_set.insert(System {
+                name: name.to_owned(),
+                coords,
+            });
+        });
+    println!("Parsing complete. Contructing the trie..");
     // Create (name, original_index) pairs and sort by name
     // so that we can remap star coordinates from original order to trie order
     // this way, the trie does not need to store the coordinate indices explicitly
