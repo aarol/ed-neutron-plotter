@@ -38,3 +38,5 @@ This will populate public/data/ with the generated star data in binary format.
 ```sh
 wasm-pack build --target web
 ```
+
+It will take a while on first run because it is compiling the rust standard library with WASM threading enabled.

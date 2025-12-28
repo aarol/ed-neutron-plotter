@@ -1,109 +1,44 @@
 use memchr::memchr;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use crate::system::Coords;
 
-pub struct SystemParser<R: Read> {
-    reader: BufReader<R>,
-    buffer: String,
-    first_line: bool,
+pub fn parse_line(line: &str) -> Option<(String, Coords)> {
+    // Skip empty lines and closing/opening bracket
+    if line.is_empty() || line == "]" || line == "[" {
+        return None;
+    }
+
+    // Remove trailing comma if present
+    let line = line.trim_end_matches(',');
+
+    let bytes = line.as_bytes();
+
+    // Find "name":" and extract the name value
+    let name = parse_str(b"\"name\":\"", bytes).expect("Name found").to_string();
+    // Find coords
+    let coords = {
+        let coords_key = b"\"coords\":{";
+        let coords_start = memchr::memmem::find(bytes, coords_key)? + coords_key.len();
+
+        let x = parse_f32(b"\"x\":", &bytes[coords_start..], b',').expect("X found");
+        let y = parse_f32(b"\"y\":", &bytes[coords_start..], b',').expect("Y found");
+        let z = parse_f32(b"\"z\":", &bytes[coords_start..], b'}').expect("Z found");
+        Coords::new(x, y, z)
+    };
+
+    Some((name, coords))
 }
 
-impl<R: Read + Seek> SystemParser<R> {
-    pub fn new(mut reader: R) -> std::io::Result<Self> {
-        // Skip the opening bracket
-        reader.seek(SeekFrom::Start(1))?;
-
-        Ok(Self {
-            reader: BufReader::new(reader),
-            buffer: String::with_capacity(512),
-            first_line: true,
-        })
-    }
-
-    fn parse_line(buffer: &str) -> Option<(&str, Coords)> {
-        let line = buffer.trim();
-
-        // Skip empty lines and closing bracket
-        if line.is_empty() || line == "]" {
-            return None;
-        }
-
-        // Remove trailing comma if present
-        let line = line.trim_end_matches(',');
-
-        let bytes = line.as_bytes();
-
-        // Find "name":" and extract the name value
-        let name = {
-            let name_key = b"\"name\":\"";
-            let name_start = memchr::memmem::find(bytes, name_key)? + name_key.len();
-            let name_end = memchr(b'"', &bytes[name_start..])?;
-
-            // SAFETY: We're taking a slice of the original line string at valid UTF-8 boundaries
-            // since we found the quote characters which are ASCII
-            unsafe { std::str::from_utf8_unchecked(&bytes[name_start..name_start + name_end]) }
-        };
-
-        // Find coords
-        let coords = {
-            let coords_key = b"\"coords\":{";
-            let coords_start = memchr::memmem::find(bytes, coords_key)? + coords_key.len();
-
-            // Find x
-            let x_key = b"\"x\":";
-            let x_start =
-                memchr::memmem::find(&bytes[coords_start..], x_key)? + coords_start + x_key.len();
-            let x_end = memchr(b',', &bytes[x_start..])?;
-            let x_str = unsafe { std::str::from_utf8_unchecked(&bytes[x_start..x_start + x_end]) };
-            let x = x_str.parse::<f32>().ok()?;
-
-            // Find y
-            let y_key = b"\"y\":";
-            let y_start =
-                memchr::memmem::find(&bytes[coords_start..], y_key)? + coords_start + y_key.len();
-            let y_end = memchr(b',', &bytes[y_start..])?;
-            let y_str = unsafe { std::str::from_utf8_unchecked(&bytes[y_start..y_start + y_end]) };
-            let y = y_str.parse::<f32>().ok()?;
-
-            // Find z
-            let z_key = b"\"z\":";
-            let z_start =
-                memchr::memmem::find(&bytes[coords_start..], z_key)? + coords_start + z_key.len();
-            let z_end = memchr(b'}', &bytes[z_start..])?;
-            let z_str = unsafe { std::str::from_utf8_unchecked(&bytes[z_start..z_start + z_end]) };
-            let z = z_str.parse::<f32>().ok()?;
-
-            Coords::new(x, y, z)
-        };
-
-        Some((name, coords))
-    }
+fn parse_f32(needle: &[u8], haystack: &[u8], end_char: u8) -> Option<f32> {
+    let x_start = memchr::memmem::find(haystack, needle)? + needle.len();
+    let x_end = memchr(end_char, &haystack[x_start..])?;
+    let x_str = unsafe { std::str::from_utf8_unchecked(&haystack[x_start..x_start + x_end]) };
+    Some(x_str.parse::<f32>().unwrap_or_else(|_| panic!("{} Valid", x_str)))
 }
 
-impl<R: Read + Seek> Iterator for SystemParser<R> {
-    type Item = (String, Coords);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            self.buffer.clear();
-
-            match self.reader.read_line(&mut self.buffer) {
-                Ok(0) => return None, // EOF
-                Ok(_) => {
-                    // Skip the first line (we already seeked past the '[')
-                    if self.first_line {
-                        self.first_line = false;
-                        continue;
-                    }
-
-                    if let Some((name, coords)) = Self::parse_line(&self.buffer) {
-                        return Some((name.to_string(), coords));
-                    }
-                    // Continue loop if line couldn't be parsed
-                }
-                Err(_) => return None,
-            }
-        }
-    }
+fn parse_str<'a>(needle: &[u8], haystack: &'a [u8]) -> Option<&'a str> {
+    let start = memchr::memmem::find(&haystack, needle)? + needle.len();
+    let end = memchr(b'"', &haystack[start..])?;
+    let str_slice = unsafe { std::str::from_utf8_unchecked(&haystack[start..start + end]) };
+    Some(str_slice)
 }

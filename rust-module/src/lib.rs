@@ -45,9 +45,12 @@ impl Module {
         }
     }
 
-    pub fn get_coords_for_star(&self, star_name: &str) -> Option<Coords> {
+    pub fn get_coords_for_star(&self, star_name: &str) -> Option<JsValue> {
         match (&self.trie, &self.stars) {
-            (Some(trie), Some(stars)) => trie.find(star_name).map(|index| stars[index as usize]),
+            (Some(trie), Some(stars)) => {
+                let coords = trie.find(star_name).map(|index| stars[index as usize]);
+                coords.map(|c| serde_wasm_bindgen::to_value(&c).unwrap())
+            }
             _ => None,
         }
     }
@@ -55,10 +58,15 @@ impl Module {
     #[wasm_bindgen]
     pub fn find_route(
         &self,
-        start: Coords,
-        end: Coords,
+        start: JsValue,
+        end: JsValue,
         report_callback: &js_sys::Function,
     ) -> Result<Box<[f32]>, JsValue> {
+        let start = serde_wasm_bindgen::from_value::<Coords>(start)
+            .map_err(|e| JsValue::from_str(&format!("Invalid start coords: {}", e)))?;
+        let end = serde_wasm_bindgen::from_value::<Coords>(end)
+            .map_err(|e| JsValue::from_str(&format!("Invalid end coords: {}", e)))?;
+
         log(&format!("Finding route from ({}) to ({})", start, end));
 
         let ship = plotter::Ship {

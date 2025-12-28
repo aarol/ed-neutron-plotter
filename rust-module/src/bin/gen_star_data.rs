@@ -1,18 +1,22 @@
 use std::{
     collections::BTreeSet,
-    io::{self, Read, Write},
+    fs::File,
+    io::{self, BufRead, Read, Write},
+    path::Path,
 };
 
+use memmap::MmapOptions;
+use rkyv::rancor;
 use rust_module::{
-    fast_json_parser::SystemParser,
+    fast_json_parser::parse_line,
     kdtree,
     system::{Coords, System},
     trie::LoudsTrie,
 };
 
 #[allow(dead_code)]
-fn analyze() -> io::Result<()> {
-    let mut file = std::io::BufReader::new(std::fs::File::open("../public/data/search_trie.bin")?);
+fn analyze_trie() -> io::Result<()> {
+    let mut file = std::io::BufReader::new(File::open("../public/data/search_trie.bin")?);
 
     let mut buf = vec![];
     file.read_to_end(&mut buf)?;
@@ -48,44 +52,121 @@ fn analyze() -> io::Result<()> {
     Ok(())
 }
 
+#[derive(rkyv::Archive, rkyv::Deserialize, Debug, rkyv::Serialize, PartialEq)]
+#[rkyv(compare(PartialEq))]
+struct SystemData {
+    systems: Vec<System>,
+}
+
+fn parse_systems_rkyv() -> io::Result<()> {
+    let mut neutrons_file = File::open("systems_neutron.json").unwrap();
+    let buf_reader = std::io::BufReader::new(&mut neutrons_file);
+    println!("Processing systems_neutron.json..");
+
+    let mut systems: Vec<System> = buf_reader
+        .lines()
+        .skip(1)
+        .flat_map(|line| parse_line(&line.unwrap()))
+        .enumerate()
+        .map(|(i, (name, coords))| {
+            if i % 100000 == 0 {
+                println!("Processing line {}", i);
+            }
+            System {
+                name: name.to_string(),
+                coords,
+                is_neutron_star: true,
+                searchable: true,
+            }
+        })
+        .collect();
+    let mut systems_file = File::open("systems_1day.json").unwrap();
+    // let mut gz_decoder = flate2::read::GzDecoder::new(&mut systems_file);
+    let buf_reader = std::io::BufReader::new(&mut systems_file);
+
+    // Include systems_1day.json 
+    // Some of these will be neutron stars already included above, but that's fine
+    // because duplicates will be removed later when constructing the btree set
+    println!("Processing systems_1day.json..");
+    let mut res: Vec<System> = buf_reader
+        .lines()
+        .skip(1)
+        // .step_by(20)
+        .flat_map(|line| parse_line(&line.unwrap()))
+        .enumerate()
+        .filter_map(|(i, (name, coords))| {
+            if i % 100000 == 0 {
+                println!("Processing line {}", i);
+            }
+            // if coords.x().abs() <= 800.0 || coords.z().abs() <= 800.0 {
+                Some(System {
+                    name,
+                    coords,
+                    is_neutron_star: false,
+                    searchable: true,
+                })
+            // }
+            // return None;
+        })
+        .collect();
+
+    systems.append(&mut res);
+
+    let system_data = SystemData { systems };
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&system_data).unwrap();
+
+    let mut out_file = File::create("systems.rkyv")?;
+    out_file.write_all(&bytes)?;
+
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     if std::env::args().any(|arg| arg.contains("analyze")) {
-        return analyze();
+        return analyze_trie();
+    }
+
+    if std::env::args().any(|arg| arg.contains("parse_systems")) {
+        return parse_systems_rkyv();
+    }
+
+    if !Path::new("systems.rkyv").exists() {
+        println!("systems.rkyv not found, generating it first..");
+        parse_systems_rkyv()?;
     }
 
     let out_dir = std::path::Path::new("../public/data");
     std::fs::create_dir_all(out_dir)?;
 
-    let neutrons_file = std::fs::File::open("systems_neutron.json")?;
-    let regular_systems_file = std::fs::File::open("systems_1day.json")?;
+    let neutrons_archive = File::open("systems.rkyv")?;
+    let mmap = unsafe { MmapOptions::new().map(&neutrons_archive)? };
 
     let mut system_set = BTreeSet::new();
+    let archived_system_data = rkyv::access::<ArchivedSystemData, rancor::Error>(&mmap).unwrap();
 
-    let parser = SystemParser::new(neutrons_file)?;
-    let parser2 = SystemParser::new(regular_systems_file)?;
-
-    let mut count = 0;
-
-    parser
-        .chain(parser2) //comment to only process neutron stars
-        .for_each(|(name, coord)| {
-            if count % 100000 == 0 {
-                println!("Processing line {}", count);
+    archived_system_data
+        .systems
+        .iter()
+        .enumerate()
+        .for_each(|(i, sys)| {
+            if i % 100000 == 0 {
+                println!("Processing line {}", i);
             }
-            count += 1;
-
+            let coords = &sys.coords;
             // The coordinates are in light years (+-30k), three.js doesn't like such huge distances
             // This will reduce the scale to max [-100, 100] in each axis
             // the EDSM api also uses this scale
             let coords = Coords::new(
-                -(coord.x() / 1000.0),
-                coord.y() / 1000.0,
-                coord.z() / 1000.0,
+                -(coords.0[0] / 1000.0),
+                coords.0[1] / 1000.0,
+                coords.0[2] / 1000.0,
             );
 
             system_set.insert(System {
-                name: name.to_owned(),
+                name: sys.name.to_string(),
                 coords,
+                is_neutron_star: sys.is_neutron_star,
+                searchable: sys.searchable,
             });
         });
     println!("Parsing complete. Contructing the trie..");
@@ -94,7 +175,7 @@ fn main() -> io::Result<()> {
     // this way, the trie does not need to store the coordinate indices explicitly
     let str_keys: Vec<&str> = system_set
         .iter()
-        .map(|system| system.name.as_str())
+        .filter_map(|system| system.searchable.then(|| system.name.as_str()))
         .collect();
     let (trie, coords_indices) = LoudsTrie::new(&str_keys);
 
@@ -110,10 +191,10 @@ fn main() -> io::Result<()> {
     let kdtree_indices = kdtree::KdTreeBuilder::from_points(&sorted_coords).build();
     let kdtree = kdtree::CompactKdTree::new(kdtree_indices.into_boxed_slice());
 
-    let mut kdtree_file = std::fs::File::create(out_dir.join("star_kdtree.bin"))?;
+    let mut kdtree_file = File::create(out_dir.join("star_kdtree.bin"))?;
     kdtree_file.write_all(&kdtree.to_bytes())?;
 
-    let mut stars_file = std::fs::File::create(out_dir.join("neutron_stars0.bin"))?;
+    let mut stars_file = File::create(out_dir.join("neutron_stars0.bin"))?;
 
     let bytes = unsafe {
         std::slice::from_raw_parts(
@@ -141,7 +222,7 @@ fn main() -> io::Result<()> {
     );
 
     // Write trie to file
-    let mut trie_file = std::fs::File::create(out_dir.join("search_trie.bin"))?;
+    let mut trie_file = File::create(out_dir.join("search_trie.bin"))?;
     let trie_bytes: Vec<u8> = trie.into();
     trie_file.write_all(&trie_bytes)?;
 
