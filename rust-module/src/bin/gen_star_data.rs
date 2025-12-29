@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use memmap::MmapOptions;
+use memmap2::MmapOptions;
 use rkyv::rancor;
 use rust_module::{
     fast_json_parser::parse_line,
