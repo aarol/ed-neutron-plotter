@@ -17,4 +17,4 @@ Node.js, pnpm and cargo need to be installed.
 
 See [rust-module/README.md](./rust-module/README.md) for generating the data.
 
-After the data is generated in the "./public/data" folder, run the dev server with ```pnpm dev```.
+After the data is generated in the "./public/data" folder, install dependencies with `pnpm install` run the dev server with `pnpm dev`.

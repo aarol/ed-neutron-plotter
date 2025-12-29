@@ -49,7 +49,7 @@ impl Module {
         match (&self.trie, &self.stars) {
             (Some(trie), Some(stars)) => {
                 let coords = trie.find(star_name).map(|index| stars[index as usize]);
-                coords.map(|c| serde_wasm_bindgen::to_value(&c).unwrap())
+                coords.map(|c| serde_wasm_bindgen::to_value(&CoordsSerde::from(c)).unwrap())
             }
             _ => None,
         }
@@ -62,11 +62,12 @@ impl Module {
         end: JsValue,
         report_callback: &js_sys::Function,
     ) -> Result<Box<[f32]>, JsValue> {
-        let start = serde_wasm_bindgen::from_value::<Coords>(start)
+        let start = serde_wasm_bindgen::from_value::<CoordsSerde>(start)
             .map_err(|e| JsValue::from_str(&format!("Invalid start coords: {}", e)))?;
-        let end = serde_wasm_bindgen::from_value::<Coords>(end)
+        let end = serde_wasm_bindgen::from_value::<CoordsSerde>(end)
             .map_err(|e| JsValue::from_str(&format!("Invalid end coords: {}", e)))?;
-
+        let start: Coords = start.into();
+        let end: Coords = end.into();
         log(&format!("Finding route from ({}) to ({})", start, end));
 
         let ship = plotter::Ship {
@@ -120,4 +121,26 @@ extern "C" {
 // #[wasm_bindgen]
 pub fn init() {
     utils::set_panic_hook();
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CoordsSerde {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+impl From<Coords> for CoordsSerde {
+    fn from(c: Coords) -> Self {
+        CoordsSerde {
+            x: c.at(0),
+            y: c.at(1),
+            z: c.at(2),
+        }
+    }
+}
+impl From<CoordsSerde> for Coords {
+    fn from(c: CoordsSerde) -> Self {
+        Coords([c.x, c.y, c.z])
+    }
 }

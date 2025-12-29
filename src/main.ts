@@ -2,7 +2,7 @@ import "./style.css";
 import { SearchBox } from "./search";
 import { Galaxy } from "./galaxy";
 import { RouteDialog } from "./route-dialog";
-import init, { Module, Coords as WasmCoords } from "../rust-module/pkg";
+import init, { Module } from "../rust-module/pkg";
 import { Vector3 } from "three/webgpu";
 import { api } from "./api";
 import * as Comlink from "comlink";
@@ -71,9 +71,7 @@ async function main() {
     onSearch: async (query: string) => {
       const pos = await api.getStarCoords(primaryModule, query)
       if (pos) {
-        if (!(pos instanceof WasmCoords)) {
-          console.log("Fetched star coordinates from API:", pos);
-        }
+        console.log("Fetched star coordinates from API:", pos);
         console.log(`Found star "${query}": (${pos.x}, ${pos.y}, ${pos.z})`);
         galaxy.setTarget(new Vector3(pos.x, pos.y, pos.z));
 
