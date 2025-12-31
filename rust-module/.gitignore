@@ -2,4 +2,6 @@
 **/*.rs.bk
 pkg/
 wasm-pack.log
-systems_*.json
+*.json
+*.json.gz
+*.rkyv
