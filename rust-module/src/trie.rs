@@ -37,8 +37,8 @@ pub struct LoudsTrie {
     complex_is_16_rank: JacobsonRank<BitVector<u64>>,
     label_palette: Vec<u32>,
 
-    label_store: Vec<u8>,
-    byte_lookup: [u8; 256],
+    store_huffman_stream: BitVector<u64>,
+    store_huffman_tree: Vec<HuffmanNode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -276,7 +276,65 @@ impl LoudsTrie {
                 }
             }
 
-            let (new_store, new_mappings) = compress_labels(&complex_labels_vec);
+            let (new_store, new_mappings_raw) = compress_labels(&complex_labels_vec);
+
+            // --- Encode Label Store with SEPARATE Huffman ---
+            let mut store_freqs = HashMap::new();
+            for &b in &new_store {
+                *store_freqs.entry(b as u16).or_insert(0usize) += 1;
+            }
+            let mut store_pq = BinaryHeap::new();
+            for (&sym, &freq) in &store_freqs {
+                store_pq.push(Reverse((freq, HuffmanNode::Leaf(sym))));
+            }
+            if store_pq.is_empty() {
+                store_pq.push(Reverse((0, HuffmanNode::Leaf(0))));
+            }
+
+            let mut store_huffman_tree = Vec::with_capacity(store_freqs.len() * 2);
+            while store_pq.len() > 1 {
+                let Reverse((f1, n1)) = store_pq.pop().unwrap();
+                let Reverse((f2, n2)) = store_pq.pop().unwrap();
+                let id1 = store_huffman_tree.len() as u16;
+                store_huffman_tree.push(n1);
+                let id2 = store_huffman_tree.len() as u16;
+                store_huffman_tree.push(n2);
+                store_pq.push(Reverse((f1 + f2, HuffmanNode::Internal(id1, id2))));
+            }
+            let s_root_node = store_pq.pop().unwrap().0.1;
+            let s_root_id = store_huffman_tree.len() as u16;
+            store_huffman_tree.push(s_root_node);
+
+            let mut store_codes = vec![(0u32, 0u8); 256];
+            fn build_store_codes(node_id: u16, tree: &[HuffmanNode], code: u32, len: u8, codes: &mut [(u32, u8)]) {
+                match tree[node_id as usize] {
+                    HuffmanNode::Leaf(sym) => {
+                        codes[sym as usize] = (code, len);
+                    }
+                    HuffmanNode::Internal(left, right) => {
+                        build_store_codes(left, tree, (code << 1) | 0, len + 1, codes);
+                        build_store_codes(right, tree, (code << 1) | 1, len + 1, codes);
+                    }
+                }
+            }
+            build_store_codes(s_root_id, &store_huffman_tree, 0, 0, &mut store_codes);
+
+            let mut store_huffman_stream = BitVector::new();
+            let mut byte_to_bit_offset = Vec::with_capacity(new_store.len() + 1);
+            for &b in &new_store {
+                byte_to_bit_offset.push(store_huffman_stream.bit_len() as u32);
+                let (code, len) = store_codes[b as usize];
+                for bit_idx in (0..len).rev() {
+                    let bit = (code >> bit_idx) & 1 == 1;
+                    store_huffman_stream.push_bit(bit);
+                }
+            }
+            byte_to_bit_offset.push(store_huffman_stream.bit_len() as u32);
+
+            let new_mappings: Vec<(u32, u32)> = new_mappings_raw.iter().map(|&(off, len)| {
+                let bit_off = byte_to_bit_offset[off as usize];
+                (bit_off, len)
+            }).collect();
 
             // Hybrid Palette Construction
             let mut pair_counts = HashMap::new();
@@ -397,11 +455,6 @@ impl LoudsTrie {
             let terminals_rank = create_rank(&terminals);
             let complex_is_16_rank = create_rank(&complex_is_16);
 
-            let mut byte_lookup = [0u8; 256];
-            for i in 0..256 {
-                byte_lookup[i] = i as u8;
-            }
-
             (
                 Self {
                     bits,
@@ -417,9 +470,9 @@ impl LoudsTrie {
                     complex_is_16,
                     complex_is_16_rank,
                     label_palette,
-                    label_store: new_store,
+                    store_huffman_stream,
+                    store_huffman_tree,
                     terminals_rank,
-                    byte_lookup,
                 },
                 coords_indices,
             )
@@ -469,10 +522,10 @@ impl LoudsTrie {
     }
 
     // Returns the Label (slice of bytes) leading to this node.
-    fn get_label(&self, index: u64) -> &[u8] {
+    pub fn get_label(&self, index: u64) -> String {
         let r1 = self.bits_select.rank1(index);
         if r1 < 2 {
-            return &[];
+            return String::new();
         } // Root (Node 1) has no label
 
         // Node ID (rank1) is 1-based.
@@ -562,16 +615,38 @@ impl LoudsTrie {
                 let rank32 = complex_idx + 1 - self.complex_is_16_rank.rank1(complex_idx);
                 self.complex_labels_32[(rank32 - 1) as usize]
             } else {
-                 return &[];
+                 return String::new();
             };
             
             let len = (packed & 0x7F) as usize;
-            let offset = (packed >> 7) as usize;
-            &self.label_store[offset..offset + len]
+            let bit_offset = (packed >> 7) as u64;
+            
+            // Decode complex label content from huffman store
+            let mut decoded = Vec::with_capacity(len);
+            let mut curr_bit = bit_offset;
+            let root_id = (self.store_huffman_tree.len() - 1) as u16;
+
+            for _ in 0..len {
+                let mut curr = root_id;
+                loop {
+                    match self.store_huffman_tree[curr as usize] {
+                        HuffmanNode::Leaf(sym) => {
+                            decoded.push(sym as u8);
+                            break;
+                        }
+                        HuffmanNode::Internal(left, right) => {
+                            let bit = self.store_huffman_stream.get_bit(curr_bit);
+                            curr_bit += 1;
+                            curr = if bit { right } else { left };
+                        }
+                    }
+                }
+            }
+            String::from_utf8_lossy(&decoded).into_owned()
         } else {
             // Simple label
-            let byte_idx = symbol as usize;
-            &self.byte_lookup[byte_idx..byte_idx + 1]
+            let byte = symbol as u8;
+            String::from_utf8_lossy(&[byte]).into_owned()
         }
     }
 
@@ -585,7 +660,7 @@ impl LoudsTrie {
             let label = self.get_label(node_index);
             // We are walking up, so we prepend the label
             // But extending and reversing later is more efficient for Vec
-            result.extend(label.iter().rev());
+            result.extend(label.as_bytes().iter().rev());
 
             node_index = p_index;
             if node_index == 0 {
@@ -613,7 +688,7 @@ impl LoudsTrie {
             while scan_idx < self.bits.bit_len() && self.bits.get_bit(scan_idx) {
                 let label = self.get_label(scan_idx);
 
-                if key_bytes.starts_with(label) {
+                if key_bytes.starts_with(label.as_bytes()) {
                     curr_node_idx = scan_idx;
                     key_bytes = &key_bytes[label.len()..];
                     found = true;
@@ -656,7 +731,7 @@ impl LoudsTrie {
         if let Some(mut child_idx) = self.first_child(node_idx) {
             while child_idx < self.bits.bit_len() && self.bits.get_bit(child_idx) {
                 let label = self.get_label(child_idx);
-                result.push(String::from_utf8_lossy(label).to_string());
+                result.push(label);
                 child_idx += 1;
             }
         }
@@ -733,7 +808,7 @@ impl LoudsTrie {
                 while child_idx < self.bits.bit_len() && self.bits.get_bit(child_idx) {
                     let label = self.get_label(child_idx);
 
-                    let common_len = common_prefix_len_case_insensitive(label, curr_prefix);
+                    let common_len = common_prefix_len_case_insensitive(label.as_bytes(), curr_prefix);
 
                     if common_len == curr_prefix.len() {
                         // Case 1: Prefix is fully matched by (a prefix of) the label.
@@ -810,8 +885,13 @@ impl LoudsTrie {
              self.label_palette.len()
          );
         println!(
-            "  - Label store (u8): {:<.2} MB",
-            bits_to_mb(self.label_store.len() as u64 * 8)
+            "  - Huffman Label Store (bit): {:<.2} MB",
+            bits_to_mb(self.store_huffman_stream.bit_len())
+        );
+        println!(
+            "  - Huffman Label Store Tree: {:<.2} MB ({} nodes)",
+            (self.store_huffman_tree.len() * size_of::<HuffmanNode>()) as f64 / 1024.0 / 1024.0,
+            self.store_huffman_tree.len()
         );
         println!(
             "  - Total size: {:<.2} MB",
@@ -835,7 +915,8 @@ impl LoudsTrie {
         let complex_is_16_bytes = self.complex_is_16.block_len() * size_of::<usize>();
         let palette_bytes = self.label_palette.len() * size_of::<u32>();
         
-        let label_store_bytes = self.label_store.len();
+        let label_store_bytes = self.store_huffman_stream.block_len() * size_of::<usize>();
+        let label_store_tree_bytes = self.store_huffman_tree.len() * size_of::<HuffmanNode>();
 
         bits_bytes
             + terminals_bytes
@@ -849,7 +930,7 @@ impl LoudsTrie {
             + complex_is_16_bytes
             + palette_bytes
             + label_store_bytes
-            + 256 // byte_lookup
+            + label_store_tree_bytes
     }
 }
 
@@ -978,10 +1059,33 @@ impl Into<Vec<u8>> for LoudsTrie {
             bytes.extend_from_slice(&val.to_le_bytes());
         }
 
-        // Serialize label_store (u8)
-        let label_store_len = self.label_store.len() as u32;
-        bytes.extend_from_slice(&label_store_len.to_le_bytes());
-        bytes.extend_from_slice(&self.label_store);
+        // 5. store_huffman_stream
+        let mut s_stream_bytes = vec![];
+        for i in 0..self.store_huffman_stream.block_len() {
+            let block = self.store_huffman_stream.get_block(i);
+            s_stream_bytes.extend_from_slice(&block.to_le_bytes());
+        }
+        let s_stream_len = s_stream_bytes.len() as u32;
+        bytes.extend_from_slice(&s_stream_len.to_le_bytes());
+        bytes.extend_from_slice(&s_stream_bytes);
+
+        // 6. store_huffman_tree
+        let stree_len = self.store_huffman_tree.len() as u32;
+        bytes.extend_from_slice(&stree_len.to_le_bytes());
+        for node in &self.store_huffman_tree {
+            match node {
+                HuffmanNode::Leaf(sym) => {
+                    bytes.push(0);
+                    bytes.extend_from_slice(&sym.to_le_bytes());
+                    bytes.extend_from_slice(&0u16.to_le_bytes());
+                }
+                HuffmanNode::Internal(l, r) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&l.to_le_bytes());
+                    bytes.extend_from_slice(&r.to_le_bytes());
+                }
+            }
+        }
 
         bytes
     }
@@ -1134,11 +1238,35 @@ impl From<&[u8]> for LoudsTrie {
             offset += 4;
         }
 
-        // Deserialize label_store
-        let label_store_len =
+        // 5. store_huffman_stream
+        let s_stream_bytes_len =
             u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let label_store = value[offset..offset + label_store_len].to_vec();
+        let mut store_huffman_stream = BitVector::new();
+        for _ in 0..(s_stream_bytes_len / 8) {
+            let val = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
+            store_huffman_stream.push_block(val);
+            offset += 8;
+        }
+
+        // 6. store_huffman_tree
+        let stree_len =
+            u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let mut store_huffman_tree = Vec::with_capacity(stree_len);
+        for _ in 0..stree_len {
+            let kind = value[offset];
+            offset += 1;
+            let v1 = u16::from_le_bytes(value[offset..offset + 2].try_into().unwrap());
+            offset += 2;
+            let v2 = u16::from_le_bytes(value[offset..offset + 2].try_into().unwrap());
+            offset += 2;
+            if kind == 0 {
+                store_huffman_tree.push(HuffmanNode::Leaf(v1));
+            } else {
+                store_huffman_tree.push(HuffmanNode::Internal(v1, v2));
+            }
+        }
 
         // Helper closure for padding
         let create_rank = |bv: &BitVector<u64>| -> JacobsonRank<BitVector<u64>> {
@@ -1158,11 +1286,6 @@ impl From<&[u8]> for LoudsTrie {
         let terminals_rank = create_rank(&terminals);
         let complex_is_16_rank = create_rank(&complex_is_16);
 
-        let mut byte_lookup = [0u8; 256];
-        for i in 0..256 {
-            byte_lookup[i] = i as u8;
-        }
-
         Self {
             bits,
             terminals,
@@ -1177,9 +1300,9 @@ impl From<&[u8]> for LoudsTrie {
             complex_is_16,
             complex_is_16_rank,
             label_palette,
-            label_store,
+            store_huffman_stream,
+            store_huffman_tree,
             terminals_rank,
-            byte_lookup,
         }
     }
 }
