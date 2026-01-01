@@ -1,7 +1,5 @@
-use std::collections::{HashMap, VecDeque, BinaryHeap, HashSet};
+use std::collections::{HashMap, VecDeque, BinaryHeap};
 use std::cmp::Reverse;
-# [allow(unused_imports)]
-use std::mem::size_of;
 
 use succinct::{
     BinSearchSelect, BitRankSupport, BitVec, BitVecPush, BitVector, JacobsonRank, Select1Support,
@@ -577,7 +575,7 @@ impl LoudsTrie {
         let edge_idx = (r1 - 2) as usize;
 
         let sample_idx = edge_idx / 256;
-        let (mut bit_offset_u32, mut complex_rank) = self.label_huffman_samples[sample_idx];
+        let (bit_offset_u32, mut complex_rank) = self.label_huffman_samples[sample_idx];
         let mut bit_offset = bit_offset_u32 as u64;
         let symbols_to_skip = edge_idx % 256;
 
@@ -848,10 +846,6 @@ impl LoudsTrie {
         size += self.store_huffman.lengths.len() + 4;
         size
     }
-}
-
-fn bits_to_mb(bits: u64) -> f64 {
-    bits as f64 / 8.0 / 1024.0 / 1024.0
 }
 
 impl Into<Vec<u8>> for LoudsTrie {
