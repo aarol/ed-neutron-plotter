@@ -26,10 +26,12 @@ pub struct LoudsTrie {
     // and the simple label byte itself in one bitstream.
     label_huffman_stream: BitVector<u64>,
     label_huffman_samples: Vec<(u32, u32)>, // (bit_offset, complex_rank) for every 64 edges
-    huffman_tree: Vec<HuffmanNode>, // Tree nodes for decoding
+    huffman_tree: Vec<HuffmanNode>, // Tree nodes for decoding labels
 
     // Hybrid Palette Fields for Complex Labels
-    complex_labels_16: Vec<u16>,
+    palette_huffman_stream: BitVector<u64>,
+    palette_huffman_samples: Vec<u32>, // Bit offset for every 64 complex labels
+    palette_huffman_tree: Vec<HuffmanNode>, // Tree nodes for decoding palette indices
     complex_labels_32: Vec<u32>,
     complex_is_16: BitVector<u64>,
     complex_is_16_rank: JacobsonRank<BitVector<u64>>,
@@ -296,7 +298,7 @@ impl LoudsTrie {
                 label_palette.push(*packed);
             }
 
-            let mut complex_labels_16 = Vec::new();
+            let mut palette_indices = Vec::new();
             let mut complex_labels_32 = Vec::new();
             let mut complex_is_16 = BitVector::new();
 
@@ -304,12 +306,80 @@ impl LoudsTrie {
                 let packed = (offset << 7) | len;
                 if let Some(&idx) = palette_map.get(&packed) {
                     complex_is_16.push_bit(true);
-                    complex_labels_16.push(idx);
+                    palette_indices.push(idx);
                 } else {
                     complex_is_16.push_bit(false);
                     complex_labels_32.push(packed);
                 }
             }
+
+            // --- Palette Huffman Encoding ---
+            let mut pal_freqs = HashMap::new();
+            for &idx in &palette_indices {
+                *pal_freqs.entry(idx).or_insert(0usize) += 1;
+            }
+
+            let mut pal_huff_pq = BinaryHeap::new();
+            for (&idx, &freq) in &pal_freqs {
+                pal_huff_pq.push(Reverse((freq, HuffmanNode::Leaf(idx))));
+            }
+
+            let mut palette_huffman_tree = Vec::with_capacity(pal_freqs.len() * 2);
+            while pal_huff_pq.len() > 1 {
+                let Reverse((f1, n1)) = pal_huff_pq.pop().unwrap();
+                let Reverse((f2, n2)) = pal_huff_pq.pop().unwrap();
+                
+                let id1 = palette_huffman_tree.len() as u16;
+                palette_huffman_tree.push(n1);
+                let id2 = palette_huffman_tree.len() as u16;
+                palette_huffman_tree.push(n2);
+                
+                pal_huff_pq.push(Reverse((f1 + f2, HuffmanNode::Internal(id1, id2))));
+            }
+            
+            let (palette_huffman_stream, palette_huffman_samples, palette_huffman_tree) = if !palette_indices.is_empty() {
+                let root_node = pal_huff_pq.pop().unwrap().0.1;
+                let root_id = palette_huffman_tree.len() as u16;
+                palette_huffman_tree.push(root_node);
+
+                let mut pal_huffman_codes = vec![(0u32, 0u8); 65536];
+                fn build_palette_codes(
+                    tree: &[HuffmanNode],
+                    node_id: u16,
+                    code: u32,
+                    len: u8,
+                    codes: &mut Vec<(u32, u8)>,
+                ) {
+                    match tree[node_id as usize] {
+                        HuffmanNode::Leaf(idx) => {
+                            codes[idx as usize] = (code, len);
+                        }
+                        HuffmanNode::Internal(left, right) => {
+                            build_palette_codes(tree, left, (code << 1) | 0, len + 1, codes);
+                            build_palette_codes(tree, right, (code << 1) | 1, len + 1, codes);
+                        }
+                    }
+                }
+                build_palette_codes(&palette_huffman_tree, root_id, 0, 0, &mut pal_huffman_codes);
+
+                let mut palette_huffman_stream = BitVector::new();
+                let mut palette_huffman_samples = Vec::with_capacity((palette_indices.len() + 63) / 64);
+
+                for (i, &idx) in palette_indices.iter().enumerate() {
+                    if i % 64 == 0 {
+                        palette_huffman_samples.push(palette_huffman_stream.bit_len() as u32);
+                    }
+                    let (code, len) = pal_huffman_codes[idx as usize];
+                    for bit_idx in (0..len).rev() {
+                        let bit = (code >> bit_idx) & 1 == 1;
+                        palette_huffman_stream.push_bit(bit);
+                    }
+                }
+                (palette_huffman_stream, palette_huffman_samples, palette_huffman_tree)
+            } else {
+                (BitVector::new(), Vec::new(), Vec::new())
+            };
+            // --------------------------------
 
             fn create_rank(bv: &BitVector<u64>) -> JacobsonRank<BitVector<u64>> {
                 let mut padded = bv.clone();
@@ -340,7 +410,9 @@ impl LoudsTrie {
                     label_huffman_stream,
                     label_huffman_samples,
                     huffman_tree,
-                    complex_labels_16,
+                    palette_huffman_stream,
+                    palette_huffman_samples,
+                    palette_huffman_tree,
                     complex_labels_32,
                     complex_is_16,
                     complex_is_16_rank,
@@ -448,9 +520,42 @@ impl LoudsTrie {
             let complex_idx = complex_rank as u64;
 
             let packed = if self.complex_is_16.bit_len() > 0 && self.complex_is_16.get_bit(complex_idx) {
-               // It's in the palette
-               let rank16 = self.complex_is_16_rank.rank1(complex_idx);
-               let palette_idx = self.complex_labels_16[(rank16 - 1) as usize];
+               // It's in the palette, decode Huffman index
+               let rank16_1based = self.complex_is_16_rank.rank1(complex_idx);
+               let palette_entry_idx = (rank16_1based - 1) as usize;
+
+               let p_sample_idx = palette_entry_idx / 64;
+               let mut p_bit_offset = self.palette_huffman_samples[p_sample_idx] as u64;
+               let p_skip = palette_entry_idx % 64;
+
+               let p_root_id = (self.palette_huffman_tree.len() - 1) as u16;
+
+               for _ in 0..p_skip {
+                    let mut curr = p_root_id;
+                    loop {
+                        match self.palette_huffman_tree[curr as usize] {
+                            HuffmanNode::Leaf(_) => break,
+                            HuffmanNode::Internal(left, right) => {
+                                let bit = self.palette_huffman_stream.get_bit(p_bit_offset);
+                                p_bit_offset += 1;
+                                curr = if bit { right } else { left };
+                            }
+                        }
+                    }
+               }
+
+               // Decode targeted palette index
+               let mut curr = p_root_id;
+               let palette_idx = loop {
+                   match self.palette_huffman_tree[curr as usize] {
+                       HuffmanNode::Leaf(idx) => break idx,
+                       HuffmanNode::Internal(left, right) => {
+                           let bit = self.palette_huffman_stream.get_bit(p_bit_offset);
+                           p_bit_offset += 1;
+                           curr = if bit { right } else { left };
+                       }
+                   }
+               };
                self.label_palette[palette_idx as usize]
             } else if self.complex_is_16.bit_len() > 0 {
                 // It's a raw pointer (bit is 0)
@@ -677,10 +782,19 @@ impl LoudsTrie {
             self.huffman_tree.len()
         );
         println!(
-             "  - Complex Labels (16-bit): {:<.2} MB ({} items)",
-             self.complex_labels_16.len() as f64 * 2.0 / 1024.0 / 1024.0,
-             self.complex_labels_16.len()
-         );
+            "  - Palette Index Stream: {:<.2} MB",
+            bits_to_mb(self.palette_huffman_stream.bit_len())
+        );
+        println!(
+            "  - Palette Sampling Table: {:<.2} MB ({} items)",
+            (self.palette_huffman_samples.len() * 4) as f64 / 1024.0 / 1024.0,
+            self.palette_huffman_samples.len()
+        );
+        println!(
+            "  - Palette Huffman Tree: {:<.2} MB ({} nodes)",
+            (self.palette_huffman_tree.len() * size_of::<HuffmanNode>()) as f64 / 1024.0 / 1024.0,
+            self.palette_huffman_tree.len()
+        );
          println!(
              "  - Complex Labels (32-bit): {:<.2} MB ({} items)",
              self.complex_labels_32.len() as f64 * 4.0 / 1024.0 / 1024.0,
@@ -713,7 +827,10 @@ impl LoudsTrie {
         let huffman_samples_bytes = self.label_huffman_samples.len() * 8;
         let huffman_tree_bytes = self.huffman_tree.len() * size_of::<HuffmanNode>();
 
-        let complex_16_bytes = self.complex_labels_16.len() * size_of::<u16>();
+        let p_stream_bytes = self.palette_huffman_stream.block_len() * size_of::<usize>();
+        let p_samples_bytes = self.palette_huffman_samples.len() * 4;
+        let p_tree_bytes = self.palette_huffman_tree.len() * size_of::<HuffmanNode>();
+
         let complex_32_bytes = self.complex_labels_32.len() * size_of::<u32>();
         let complex_is_16_bytes = self.complex_is_16.block_len() * size_of::<usize>();
         let palette_bytes = self.label_palette.len() * size_of::<u32>();
@@ -725,7 +842,9 @@ impl LoudsTrie {
             + huffman_stream_bytes
             + huffman_samples_bytes
             + huffman_tree_bytes
-            + complex_16_bytes
+            + p_stream_bytes
+            + p_samples_bytes
+            + p_tree_bytes
             + complex_32_bytes
             + complex_is_16_bytes
             + palette_bytes
@@ -802,11 +921,37 @@ impl Into<Vec<u8>> for LoudsTrie {
 
         // Serialize complex_labels (hybrid)
         
-        // 1. complex_labels_16
-        let c16_len = self.complex_labels_16.len() as u32;
-        bytes.extend_from_slice(&c16_len.to_le_bytes());
-        for val in &self.complex_labels_16 {
-            bytes.extend_from_slice(&val.to_le_bytes());
+        // 1. Unified Huffman: Palette Stream, Samples, Tree
+        let mut p_stream_bytes = vec![];
+        for i in 0..self.palette_huffman_stream.block_len() {
+            let block = self.palette_huffman_stream.get_block(i);
+            p_stream_bytes.extend_from_slice(&block.to_le_bytes());
+        }
+        let p_stream_len = p_stream_bytes.len() as u32;
+        bytes.extend_from_slice(&p_stream_len.to_le_bytes());
+        bytes.extend_from_slice(&p_stream_bytes);
+
+        let p_samples_len = self.palette_huffman_samples.len() as u32;
+        bytes.extend_from_slice(&p_samples_len.to_le_bytes());
+        for &off in &self.palette_huffman_samples {
+            bytes.extend_from_slice(&off.to_le_bytes());
+        }
+
+        let p_tree_len = self.palette_huffman_tree.len() as u32;
+        bytes.extend_from_slice(&p_tree_len.to_le_bytes());
+        for node in &self.palette_huffman_tree {
+            match node {
+                HuffmanNode::Leaf(val) => {
+                    bytes.push(0);
+                    bytes.extend_from_slice(&val.to_le_bytes());
+                    bytes.extend_from_slice(&0u16.to_le_bytes());
+                }
+                HuffmanNode::Internal(l, r) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&l.to_le_bytes());
+                    bytes.extend_from_slice(&r.to_le_bytes());
+                }
+            }
         }
 
         // 2. complex_labels_32
@@ -916,15 +1061,38 @@ impl From<&[u8]> for LoudsTrie {
 
         // Deserialize complex_labels (hybrid)
         
-        // 1. complex_labels_16
-        let c16_len =
-            u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        // 1. Palette Huffman
+        let p_stream_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let mut complex_labels_16 = Vec::with_capacity(c16_len);
-        for _ in 0..c16_len {
-            let val = u16::from_le_bytes(value[offset..offset + 2].try_into().unwrap());
-            complex_labels_16.push(val);
-            offset += 2;
+        let mut palette_huffman_stream = BitVector::new();
+        for _ in 0..(p_stream_len / 8) {
+            let val = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
+            palette_huffman_stream.push_block(val);
+            offset += 8;
+        }
+
+        let p_samples_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let mut palette_huffman_samples = Vec::with_capacity(p_samples_len);
+        for _ in 0..p_samples_len {
+            let off = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
+            palette_huffman_samples.push(off);
+            offset += 4;
+        }
+
+        let p_tree_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let mut palette_huffman_tree = Vec::with_capacity(p_tree_len);
+        for _ in 0..p_tree_len {
+            let tag = value[offset];
+            let v1 = u16::from_le_bytes(value[offset+1..offset+3].try_into().unwrap());
+            let v2 = u16::from_le_bytes(value[offset+3..offset+5].try_into().unwrap());
+            if tag == 0 {
+                palette_huffman_tree.push(HuffmanNode::Leaf(v1));
+            } else {
+                palette_huffman_tree.push(HuffmanNode::Internal(v1, v2));
+            }
+            offset += 5;
         }
 
         // 2. complex_labels_32
@@ -1002,7 +1170,9 @@ impl From<&[u8]> for LoudsTrie {
             label_huffman_stream,
             label_huffman_samples,
             huffman_tree,
-            complex_labels_16,
+            palette_huffman_stream,
+            palette_huffman_samples,
+            palette_huffman_tree,
             complex_labels_32,
             complex_is_16,
             complex_is_16_rank,
