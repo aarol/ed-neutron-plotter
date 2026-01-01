@@ -25,7 +25,14 @@ pub struct LoudsTrie {
     label_type_rank: JacobsonRank<BitVector<u64>>,
 
     simple_labels: Vec<u8>,
-    complex_labels: Vec<u32>,
+    
+    // Hybrid Palette Fields
+    complex_labels_16: Vec<u16>,             // Stores indices into label_palette
+    complex_labels_32: Vec<u32>,             // Stores direct (offset, len)
+    complex_is_16: succinct::BitVector<u64>, // 1 = palette index, 0 = direct pointer
+    complex_is_16_rank: JacobsonRank<BitVector<u64>>,
+    label_palette: Vec<u32>, // The actual (offset, len) for the palette indices
+
     label_store: Vec<u8>,
 }
 
@@ -180,7 +187,6 @@ impl LoudsTrie {
 
         // 4. Split and Compress Labels
         let mut simple_labels = Vec::new();
-        let mut complex_labels = Vec::new();
         let mut complex_labels_vec = Vec::new();
         let mut label_type = BitVector::new();
 
@@ -200,16 +206,65 @@ impl LoudsTrie {
 
         let (new_store, new_mappings) = compress_labels(&complex_labels_vec);
 
-        for (offset, len) in new_mappings {
+        // Hybrid Palette Construction
+        let mut pair_counts = HashMap::new();
+        for &(offset, len) in &new_mappings {
             assert!(len < 128, "Label too long");
             assert!(offset < (1 << 25), "Label store too large");
-            complex_labels.push((offset << 7) | len);
+            let packed = (offset << 7) | len;
+            *pair_counts.entry(packed).or_insert(0) += 1;
         }
 
-        let rank = JacobsonRank::new(bits.clone());
+        // Find most frequent labels
+        let mut sorted_counts: Vec<(u32, usize)> = pair_counts.into_iter().collect();
+        // Sort by frequency descending
+        sorted_counts.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+        let palette_size = 65536;
+        let mut palette_map = HashMap::new();
+        let mut label_palette = Vec::new();
+
+        for (packed, _) in sorted_counts.iter().take(palette_size) {
+            let idx = label_palette.len() as u16;
+            palette_map.insert(*packed, idx);
+            label_palette.push(*packed);
+        }
+
+        let mut complex_labels_16 = Vec::new();
+        let mut complex_labels_32 = Vec::new();
+        let mut complex_is_16 = BitVector::new();
+
+        for &(offset, len) in &new_mappings {
+            let packed = (offset << 7) | len;
+            if let Some(&idx) = palette_map.get(&packed) {
+                complex_is_16.push_bit(true);
+                complex_labels_16.push(idx);
+            } else {
+                complex_is_16.push_bit(false);
+                complex_labels_32.push(packed);
+            }
+        }
+
+        // Helper to create robust JacobsonRank even for small bitvectors
+        fn create_rank(bv: &BitVector<u64>) -> JacobsonRank<BitVector<u64>> {
+            let mut padded = bv.clone();
+            // Pad to ensure we have at least 1024 bits to avoid potential divide-by-zero in succinct crate for small inputs
+            if padded.bit_len() < 1024 {
+                let current_len = padded.bit_len();
+                for _ in 0..(1024 - current_len) {
+                    padded.push_bit(false);
+                }
+            }
+            JacobsonRank::new(padded)
+        }
+
+        let rank = create_rank(&bits);
         let select = BinSearchSelect::new(rank);
-        let label_type_rank = JacobsonRank::new(label_type.clone());
-        let terminals_rank = JacobsonRank::new(terminals.clone());
+        
+        let label_type_rank = create_rank(&label_type);
+        let terminals_rank = create_rank(&terminals);
+        let complex_is_16_rank = create_rank(&complex_is_16);
+
 
         (
             Self {
@@ -219,7 +274,13 @@ impl LoudsTrie {
                 label_type,
                 label_type_rank,
                 simple_labels,
-                complex_labels,
+                
+                complex_labels_16,
+                complex_labels_32,
+                complex_is_16,
+                complex_is_16_rank, // This might be "fake" empty rank
+                label_palette,
+
                 label_store: new_store,
                 terminals_rank,
             },
@@ -281,11 +342,28 @@ impl LoudsTrie {
             // Complex label
             let rank = self.label_type_rank.rank1(idx);
             // rank is 1-based count of 1s up to idx.
-            // Vector is 0-based, so use rank - 1.
-            if rank == 0 {
-                return &[];
-            } // Should not happen if bit is 1
-            let packed = self.complex_labels[(rank - 1) as usize];
+            let complex_idx = (rank - 1) as u64;
+
+            let packed = if self.complex_is_16.bit_len() > 0 && self.complex_is_16.get_bit(complex_idx) {
+               // It's in the palette
+               let rank16 = self.complex_is_16_rank.rank1(complex_idx);
+               let palette_idx = self.complex_labels_16[(rank16 - 1) as usize];
+               self.label_palette[palette_idx as usize]
+            } else if self.complex_is_16.bit_len() > 0 {
+                // It's a raw pointer (bit is 0)
+                // Rank0 gives us the index in the 32-bit array
+                // rank0(i) is count of 0s in [0..i]
+                let rank32 = complex_idx + 1 - self.complex_is_16_rank.rank1(complex_idx);
+                self.complex_labels_32[(rank32 - 1) as usize]
+            } else {
+                 // No bits in complex_is_16 at all? This implies no complex labels exist?
+                 // But we are inside `if self.label_type.get_bit(idx)` which means there ARE complex labels.
+                 // If complex_is_16 is empty, then NO complex labels were processed, which contradicts label_type having a 1.
+                 // WAIT. If complex_is_16 is empty, complex_labels_16 and 32 are also empty.
+                 // This branch should represent "Should not happen if bit is 1".
+                 return &[];
+            };
+            
             let len = (packed & 0x7F) as usize;
             let offset = (packed >> 7) as usize;
             &self.label_store[offset..offset + len]
@@ -503,9 +581,24 @@ impl LoudsTrie {
             self.simple_labels.len() as f64 / 1024.0 / 1024.0
         );
         println!(
-            "  - Complex Labels: {:<.2} MB",
-            self.complex_labels.len() as f64 * 4.0 / 1024.0 / 1024.0
-        );
+             "  - Complex Labels (16-bit): {:<.2} MB ({} items)",
+             self.complex_labels_16.len() as f64 * 2.0 / 1024.0 / 1024.0,
+             self.complex_labels_16.len()
+         );
+         println!(
+             "  - Complex Labels (32-bit): {:<.2} MB ({} items)",
+             self.complex_labels_32.len() as f64 * 4.0 / 1024.0 / 1024.0,
+             self.complex_labels_32.len()
+         );
+         println!(
+             "  - Complex Is 16 BitMap: {:<.2} MB",
+             bits_to_mb(self.complex_is_16.bit_len())
+         );
+         println!(
+             "  - Palette: {:<.2} MB ({} items)",
+             self.label_palette.len() as f64 * 4.0 / 1024.0 / 1024.0,
+             self.label_palette.len()
+         );
         println!(
             "  - Label store (u8): {:<.2} MB",
             bits_to_mb(self.label_store.len() as u64 * 8)
@@ -516,14 +609,22 @@ impl LoudsTrie {
         let bits_bytes = self.bits.block_len() * size_of::<usize>();
         let terminals_bytes = self.terminals.block_len() * size_of::<usize>();
         let simple_bytes = self.simple_labels.len();
-        let complex_bytes = self.complex_labels.len() * size_of::<u32>();
+        
+        let complex_16_bytes = self.complex_labels_16.len() * size_of::<u16>();
+        let complex_32_bytes = self.complex_labels_32.len() * size_of::<u32>();
+        let complex_is_16_bytes = self.complex_is_16.block_len() * size_of::<usize>();
+        let palette_bytes = self.label_palette.len() * size_of::<u32>();
+        
         let label_store_bytes = self.label_store.len();
         let label_type_bytes = self.label_type.block_len() * size_of::<usize>();
 
         bits_bytes
             + terminals_bytes
             + simple_bytes
-            + complex_bytes
+            + complex_16_bytes
+            + complex_32_bytes
+            + complex_is_16_bytes
+            + palette_bytes
             + label_store_bytes
             + label_type_bytes
     }
@@ -572,10 +673,36 @@ impl Into<Vec<u8>> for LoudsTrie {
         bytes.extend_from_slice(&simple_len.to_le_bytes());
         bytes.extend_from_slice(&self.simple_labels);
 
-        // Serialize complex_labels (u32)
-        let complex_len = self.complex_labels.len() as u32;
-        bytes.extend_from_slice(&complex_len.to_le_bytes());
-        for &val in &self.complex_labels {
+        // Serialize complex_labels (hybrid)
+        
+        // 1. complex_labels_16 (u16)
+        let c16_len = self.complex_labels_16.len() as u32;
+        bytes.extend_from_slice(&c16_len.to_le_bytes());
+        for &val in &self.complex_labels_16 {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        // 2. complex_labels_32 (u32)
+        let c32_len = self.complex_labels_32.len() as u32;
+        bytes.extend_from_slice(&c32_len.to_le_bytes());
+        for &val in &self.complex_labels_32 {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+        
+        // 3. complex_is_16 (BitVector)
+        let mut cis16_bytes = vec![];
+        for i in 0..self.complex_is_16.block_len() {
+            let block = self.complex_is_16.get_block(i);
+            cis16_bytes.extend_from_slice(&block.to_le_bytes());
+        }
+        let cis16_len = cis16_bytes.len() as u32;
+        bytes.extend_from_slice(&cis16_len.to_le_bytes());
+        bytes.extend_from_slice(&cis16_bytes);
+        
+        // 4. label_palette (u32)
+        let pal_len = self.label_palette.len() as u32;
+        bytes.extend_from_slice(&pal_len.to_le_bytes());
+        for &val in &self.label_palette {
             bytes.extend_from_slice(&val.to_le_bytes());
         }
 
@@ -641,14 +768,52 @@ impl From<&[u8]> for LoudsTrie {
         let simple_labels = value[offset..offset + simple_len].to_vec();
         offset += simple_len;
 
-        // Deserialize complex_labels
-        let complex_len =
+        // Deserialize complex_labels (hybrid)
+        
+        // 1. complex_labels_16
+        let c16_len =
             u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let mut complex_labels = Vec::with_capacity(complex_len);
-        for _ in 0..complex_len {
+        let mut complex_labels_16 = Vec::with_capacity(c16_len);
+        for _ in 0..c16_len {
+            let val = u16::from_le_bytes(value[offset..offset + 2].try_into().unwrap());
+            complex_labels_16.push(val);
+            offset += 2;
+        }
+
+        // 2. complex_labels_32
+        let c32_len =
+            u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let mut complex_labels_32 = Vec::with_capacity(c32_len);
+        for _ in 0..c32_len {
             let val = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
-            complex_labels.push(val);
+            complex_labels_32.push(val);
+            offset += 4;
+        }
+        
+        // 3. complex_is_16
+        let cis16_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let mut cis16_u64s = Vec::with_capacity(cis16_len / 8);
+        for _ in 0..(cis16_len / 8) {
+            let block = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
+            cis16_u64s.push(block);
+            offset += 8;
+        }
+        let mut complex_is_16 = BitVector::block_with_capacity(cis16_len);
+        for &block in cis16_u64s.iter() {
+            complex_is_16.push_block(block);
+        }
+        
+        // 4. label_palette
+        let pal_len =
+            u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let mut label_palette = Vec::with_capacity(pal_len);
+        for _ in 0..pal_len {
+            let val = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
+            label_palette.push(val);
             offset += 4;
         }
 
@@ -658,10 +823,24 @@ impl From<&[u8]> for LoudsTrie {
         offset += 4;
         let label_store = value[offset..offset + label_store_len].to_vec();
 
-        let rank = JacobsonRank::new(bits.clone());
+        // Helper closure for padding
+        let create_rank = |bv: &BitVector<u64>| -> JacobsonRank<BitVector<u64>> {
+            let mut padded = bv.clone();
+            if padded.bit_len() < 1024 {
+                let current_len = padded.bit_len();
+                for _ in 0..(1024 - current_len) {
+                    padded.push_bit(false);
+                }
+            }
+            JacobsonRank::new(padded)
+        };
+
+        let rank = create_rank(&bits);
         let select = BinSearchSelect::new(rank);
-        let label_type_rank = JacobsonRank::new(label_type.clone());
-        let terminals_rank = JacobsonRank::new(terminals.clone());
+        
+        let label_type_rank = create_rank(&label_type);
+        let terminals_rank = create_rank(&terminals);
+        let complex_is_16_rank = create_rank(&complex_is_16);
 
         Self {
             bits,
@@ -670,7 +849,13 @@ impl From<&[u8]> for LoudsTrie {
             label_type,
             label_type_rank,
             simple_labels,
-            complex_labels,
+            
+            complex_labels_16,
+            complex_labels_32,
+            complex_is_16,
+            complex_is_16_rank,
+            label_palette,
+
             label_store,
             terminals_rank,
         }
@@ -678,41 +863,7 @@ impl From<&[u8]> for LoudsTrie {
 }
 
 impl LoudsTrie {
-    pub fn compress_store(&mut self) {
-        // We only compress the complex labels.
-        // Simple labels are already minimal (1 byte).
 
-        // 1. Extract complex labels
-        let mut complex_labels_vec: Vec<Vec<u8>> = Vec::new();
-        let mut complex_indices: Vec<usize> = Vec::new();
-
-        for i in 0..self.complex_labels.len() {
-            let packed = self.complex_labels[i];
-            let len = (packed & 0x7F) as usize;
-            let offset = (packed >> 7) as usize;
-            let s = self.label_store[offset..offset + len].to_vec();
-            complex_labels_vec.push(s);
-            complex_indices.push(i);
-        }
-
-        if complex_labels_vec.is_empty() {
-            return;
-        }
-
-        // 2. Compress
-        let (new_store, new_mappings) = compress_labels(&complex_labels_vec);
-
-        // 3. Update store
-        self.label_store = new_store;
-
-        // 4. Update pointers
-        for (i, &(offset, len)) in new_mappings.iter().enumerate() {
-            let original_idx = complex_indices[i];
-            assert!(offset < (1 << 25), "Label store too large");
-            assert!(len < 128, "Label too long");
-            self.complex_labels[original_idx] = (offset << 7) | len;
-        }
-    }
 }
 
 #[allow(dead_code)]
