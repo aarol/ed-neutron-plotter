@@ -76,27 +76,29 @@ impl LoudsTrie {
         }
 
         fn compress(node: TempNode) -> CompressedNode {
+
+            // We can play with these but they haven't proved to be effective
+            const MAX_SIMPLE_MERGE_LABEL_LEN: usize = 9999;
+            const MAX_MERGE_CHILDREN: usize = 1;
+            const MAX_MERGE_LABEL_LEN: usize = 1;
+
             let mut new_children = Vec::new();
             for (byte, child) in node.children {
                 let mut c_child = compress(child);
                 let mut label = vec![byte];
 
                 // Try to merge child into this edge
-                const MAX_SIMPLE_MERGE_LABEL_LEN: usize = 999;
                 while c_child.children.len() == 1 
                     && !c_child.is_terminal 
                 {
                     let next_len = c_child.children[0].0.len();
-                    if label.len() + next_len > MAX_SIMPLE_MERGE_LABEL_LEN {
+                    if label.len() + next_len > min(MAX_SIMPLE_MERGE_LABEL_LEN, 255) {
                         break;
                     }
                     let (next_label, next_node) = c_child.children.pop().unwrap();
                     label.extend(next_label);
                     c_child = next_node;
                 }
-                // Aggressive Merge: Flatten nodes with few children
-                const MAX_MERGE_CHILDREN: usize = 1;
-                const MAX_MERGE_LABEL_LEN: usize = 0;
                 
                 if !c_child.is_terminal 
                    && c_child.children.len() > 1 
@@ -556,29 +558,27 @@ impl LoudsTrie {
             "  - Total terminals: {:<.2} MB",
             bits_to_mb(self.terminals.bit_len())
         );
+        let total_labels = self.complex_labels_8.len() 
+            + self.complex_labels_16.len() 
+            + self.complex_labels_32.len();
+
         println!(
-            "  - Complex Labels (8-bit): {:<.2} MB ({} items)",
+            "  - Labels (8-bit Palette): {:<.2} MB ({} items, {:.1}% total)",
             self.complex_labels_8.len() as f64 / 1024.0 / 1024.0,
-            self.complex_labels_8.len()
+            self.complex_labels_8.len(),
+            (self.complex_labels_8.len() as f64 / total_labels as f64) * 100.0
         );
         println!(
-             "  - Complex Labels (16-bit): {:<.2} MB ({} items)",
+             "  - Labels (16-bit Palette): {:<.2} MB ({} items, {:.1}% total)",
              self.complex_labels_16.len() as f64 * 2.0 / 1024.0 / 1024.0,
-             self.complex_labels_16.len()
+             self.complex_labels_16.len(),
+             (self.complex_labels_16.len() as f64 / total_labels as f64) * 100.0
          );
-         {
-             let total_palette_refs = self.complex_labels_8.len() + self.complex_labels_16.len();
-             if total_palette_refs > 0 {
-                 println!(
-                     "    - Palette 8-bit coverage: {:.1}%",
-                     (self.complex_labels_8.len() as f64 / total_palette_refs as f64) * 100.0
-                 );
-             }
-         }
          println!(
-             "  - Complex Labels (32-bit): {:<.2} MB ({} items)",
+             "  - Labels (32-bit Raw): {:<.2} MB ({} items, {:.1}% total)",
              self.complex_labels_32.len() as f64 * 4.0 / 1024.0 / 1024.0,
-             self.complex_labels_32.len()
+             self.complex_labels_32.len(),
+             (self.complex_labels_32.len() as f64 / total_labels as f64) * 100.0
          );
          println!(
             "  - Complex Is 16 BitMap: {:<.2} MB",
