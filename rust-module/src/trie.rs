@@ -21,11 +21,6 @@ pub struct LoudsTrie {
     terminals: succinct::BitVector<u64>,
     terminals_rank: JacobsonRank<BitVector<u64>>,
 
-    label_type: succinct::BitVector<u64>,
-    label_type_rank: JacobsonRank<BitVector<u64>>,
-
-    simple_labels: Vec<u8>,
-    
     // Hybrid Palette Fields
     complex_labels_8: Vec<u8>,               // Indices 0..255
     complex_labels_16: Vec<u16>,             // Indices 256..65535
@@ -130,43 +125,7 @@ impl LoudsTrie {
             }
         }
 
-        let mut root_compressed = compress(root);
-
-        // If the node has a label of length two or three, split it into multiple nodes so that the label length is 1.
-        // This actually saves space since 1-byte labels are stored more compactly.
-        fn decompress_short(node: CompressedNode) -> CompressedNode {
-            let mut new_children = Vec::new();
-
-            for (label, child) in node.children {
-                let decompressed_child = decompress_short(child);
-
-                if label.len() > 1 && label.len() <= 3 {
-                    // Split the label into a chain of single-byte nodes
-                    // Work backwards from the last byte to build the chain
-                    let mut current = decompressed_child;
-
-                    for i in (1..label.len()).rev() {
-                        current = CompressedNode {
-                            id: None,
-                            children: vec![(vec![label[i]], current)],
-                            is_terminal: false,
-                        };
-                    }
-
-                    new_children.push((vec![label[0]], current));
-                } else {
-                    new_children.push((label, decompressed_child));
-                }
-            }
-
-            CompressedNode {
-                id: node.id,
-                children: new_children,
-                is_terminal: node.is_terminal,
-            }
-        }
-
-        // root_compressed = decompress_short(root_compressed);
+        let root_compressed = compress(root);
 
         // 3. BFS to generate LOUDS bits and Labels
         let mut bits = BitVector::new();
@@ -208,21 +167,12 @@ impl LoudsTrie {
             bits.push_bit(false); // '0' to end this node's list of children
         }
 
-        // 4. Split and Compress Labels
-        let mut simple_labels = Vec::new();
-        let mut complex_labels_vec = Vec::new();
-        let mut label_type = BitVector::new();
+        // 4. Compress Labels
+        let mut complex_labels_vec = Vec::with_capacity(temp_node_labels.len());
 
         for (offset, len) in temp_node_labels {
             let s = &temp_label_store[offset..offset + len];
-
-            if len == 1 {
-                label_type.push_bit(false);
-                simple_labels.push(s[0]);
-            } else {
-                label_type.push_bit(true);
-                complex_labels_vec.push(s.to_vec());
-            }
+            complex_labels_vec.push(s.to_vec());
         }
 
         let (new_store, new_mappings) = compress_labels(&complex_labels_vec);
@@ -291,20 +241,15 @@ impl LoudsTrie {
         let rank = create_rank(&bits);
         let select = BinSearchSelect::new(rank);
         
-        let label_type_rank = create_rank(&label_type);
         let terminals_rank = create_rank(&terminals);
         let complex_is_16_rank = create_rank(&complex_is_16);
         let complex_is_8_rank = create_rank(&complex_is_8);
-
 
         (
             Self {
                 bits,
                 terminals,
                 bits_select: select,
-                label_type,
-                label_type_rank,
-                simple_labels,
                 
                 complex_labels_8,
                 complex_labels_16,
@@ -361,69 +306,38 @@ impl LoudsTrie {
         Some(s1)
     }
 
-    // Returns the Label (slice of bytes) leading to this node.
-    fn get_label(&self, index: u64) -> &[u8] {
-        let r1 = self.bits_select.rank1(index);
+    /// Returns the Label (slice of bytes) leading to the node at bit index `bits_idx`.
+    pub fn get_label(&self, bits_idx: u64) -> &[u8] {
+        let r1 = self.bits_select.rank1(bits_idx);
         if r1 < 2 {
             return &[];
-        } // Root (Node 1) has no label
+        } // Root (Rank 1) has no label
 
-        // Node ID (rank1) is 1-based.
-        // We map to 0-based index for label arrays: idx = r1 - 2.
-        let idx = r1 - 2;
+        // The label for the k-th '1' (node k) is at index k-2
+        let complex_idx = r1 - 2;
 
-        if self.label_type.get_bit(idx) {
-            // Complex label
-            let rank = self.label_type_rank.rank1(idx);
-            // rank is 1-based count of 1s up to idx.
-            let complex_idx = (rank - 1) as u64;
-
-            let packed = if self.complex_is_16.bit_len() > 0 && self.complex_is_16.get_bit(complex_idx) {
-                // It's in the palette
-                let palette_idx = if self.complex_is_8.get_bit(complex_idx) {
-                    let rank8 = self.complex_is_8_rank.rank1(complex_idx);
-                    self.complex_labels_8[(rank8 - 1) as usize] as u16
-                } else {
-                    // Index in complex_labels_16 is (Total Palette Items) - (8-bit Palette Items)
-                    let total_palette_rank = self.complex_is_16_rank.rank1(complex_idx);
-                    let rank8bit = self.complex_is_8_rank.rank1(complex_idx);
-                    let index_in_16 = total_palette_rank - rank8bit;
-                    self.complex_labels_16[(index_in_16 - 1) as usize]
-                };
-                self.label_palette[palette_idx as usize]
-            } else if self.complex_is_16.bit_len() > 0 {
-                // It's a raw pointer (bit is 0)
-                // Rank0 gives us the index in the 32-bit array
-                // rank0(i) is count of 0s in [0..i]
-                let rank32 = complex_idx + 1 - self.complex_is_16_rank.rank1(complex_idx);
-                self.complex_labels_32[(rank32 - 1) as usize]
+        let packed = if self.complex_is_16.bit_len() > 0 && self.complex_is_16.get_bit(complex_idx) {
+            // It's in the palette
+            let palette_idx = if self.complex_is_8.get_bit(complex_idx) {
+                let rank8 = self.complex_is_8_rank.rank1(complex_idx);
+                self.complex_labels_8[(rank8 - 1) as usize] as u16
             } else {
-                 // No bits in complex_is_16 at all? This implies no complex labels exist?
-                 // But we are inside `if self.label_type.get_bit(idx)` which means there ARE complex labels.
-                 // If complex_is_16 is empty, then NO complex labels were processed, which contradicts label_type having a 1.
-                 // WAIT. If complex_is_16 is empty, complex_labels_16 and 32 are also empty.
-                 // This branch should represent "Should not happen if bit is 1".
-                 return &[];
+                let total_palette_rank = self.complex_is_16_rank.rank1(complex_idx);
+                let rank8bit = self.complex_is_8_rank.rank1(complex_idx);
+                let index_in_16 = total_palette_rank - rank8bit;
+                self.complex_labels_16[(index_in_16 - 1) as usize]
             };
-            
-            let len = (packed & 0xFF) as usize;
-            let offset = (packed >> 8) as usize;
-            &self.label_store[offset..offset + len]
+            self.label_palette[palette_idx as usize]
+        } else if self.complex_is_16.bit_len() > 0 {
+            let rank32 = complex_idx + 1 - self.complex_is_16_rank.rank1(complex_idx);
+            self.complex_labels_32[(rank32 - 1) as usize]
         } else {
-            // Simple label
-            // rank0 gives count of 0s.
-            // rank0(idx) gives count of 0s in [0..idx] (inclusive? succinct docs say inclusive)
-            // Let's verify rank0 behavior. Usually rank0(i) is count of 0s in 0..=i.
-            // So if idx is the k-th 0, rank0(idx) = k.
-            // We want the index in simple_labels.
-            let rank0 = idx + 1 - self.label_type_rank.rank1(idx);
-            // rank0 is 1-based count.
-            if rank0 == 0 {
-                return &[];
-            }
-            let simple_idx = (rank0 - 1) as usize;
-            &self.simple_labels[simple_idx..simple_idx + 1]
-        }
+             return &[];
+        };
+
+        let len = (packed & 0xFF) as usize;
+        let offset = (packed >> 8) as usize;
+        &self.label_store[offset..offset + len]
     }
 
     /// 3. BOTTOM-UP TRAVERSAL
@@ -613,7 +527,6 @@ impl LoudsTrie {
     pub fn size_on_disk(&self) -> usize {
         let bits_bytes = self.bits.block_len() * size_of::<usize>();
         let terminals_bytes = self.terminals.block_len() * size_of::<usize>();
-        let simple_bytes = self.simple_labels.len();
         
         let complex_8_bytes = self.complex_labels_8.len();
         let complex_16_bytes = self.complex_labels_16.len() * size_of::<u16>();
@@ -623,11 +536,9 @@ impl LoudsTrie {
         let palette_bytes = self.label_palette.len() * size_of::<u32>();
         
         let label_store_bytes = self.label_store.len();
-        let label_type_bytes = self.label_type.block_len() * size_of::<usize>();
 
         bits_bytes
             + terminals_bytes
-            + simple_bytes
             + complex_8_bytes
             + complex_16_bytes
             + complex_32_bytes
@@ -635,7 +546,6 @@ impl LoudsTrie {
             + complex_is_8_bytes
             + palette_bytes
             + label_store_bytes
-            + label_type_bytes
     }
 
     pub fn analyze_structure(&self) {
@@ -646,17 +556,6 @@ impl LoudsTrie {
             "  - Total terminals: {:<.2} MB",
             bits_to_mb(self.terminals.bit_len())
         );
-        println!(
-            "  - Simple Labels: {:<.2} MB",
-            self.simple_labels.len() as f64 / 1024.0 / 1024.0
-        );
-        {
-            let mut unique_simple = std::collections::HashSet::new();
-            for &b in &self.simple_labels {
-                unique_simple.insert(b);
-            }
-            println!("    - Unique simple chars: {}", unique_simple.len());
-        }
         println!(
             "  - Complex Labels (8-bit): {:<.2} MB ({} items)",
             self.complex_labels_8.len() as f64 / 1024.0 / 1024.0,
@@ -732,21 +631,6 @@ impl Into<Vec<u8>> for LoudsTrie {
         let terminals_len = terminals_bytes.len() as u32;
         bytes.extend_from_slice(&terminals_len.to_le_bytes());
         bytes.extend_from_slice(&terminals_bytes);
-
-        // Serialize label_type
-        let mut lt_bytes = vec![];
-        for i in 0..self.label_type.block_len() {
-            let block = self.label_type.get_block(i);
-            lt_bytes.extend_from_slice(&block.to_le_bytes());
-        }
-        let lt_len = lt_bytes.len() as u32;
-        bytes.extend_from_slice(&lt_len.to_le_bytes());
-        bytes.extend_from_slice(&lt_bytes);
-
-        // Serialize simple_labels
-        let simple_len = self.simple_labels.len() as u32;
-        bytes.extend_from_slice(&simple_len.to_le_bytes());
-        bytes.extend_from_slice(&self.simple_labels);
 
         // Serialize complex_labels (hybrid)
         
@@ -838,26 +722,6 @@ impl From<&[u8]> for LoudsTrie {
             terminals.push_block(block);
         }
 
-        // Deserialize label_type
-        let lt_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        let mut lt_u64s = Vec::with_capacity(lt_len / 8);
-        for _ in 0..(lt_len / 8) {
-            let block = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
-            lt_u64s.push(block);
-            offset += 8;
-        }
-        let mut label_type = BitVector::block_with_capacity(lt_len);
-        for &block in lt_u64s.iter() {
-            label_type.push_block(block);
-        }
-
-        // Deserialize simple_labels
-        let simple_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        let simple_labels = value[offset..offset + simple_len].to_vec();
-        offset += simple_len;
-
         // Deserialize complex_labels (hybrid)
         
         // 0. complex_labels_8
@@ -947,19 +811,14 @@ impl From<&[u8]> for LoudsTrie {
         let rank = create_rank(&bits);
         let select = BinSearchSelect::new(rank);
         
-        let label_type_rank = create_rank(&label_type);
         let terminals_rank = create_rank(&terminals);
         let complex_is_16_rank = create_rank(&complex_is_16);
-
         let complex_is_8_rank = create_rank(&complex_is_8);
 
         Self {
             bits,
             terminals,
             bits_select: select,
-            label_type,
-            label_type_rank,
-            simple_labels,
             
             complex_labels_8,
             complex_labels_16,
