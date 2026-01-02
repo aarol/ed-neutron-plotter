@@ -138,7 +138,7 @@ impl LoudsTrie {
             }
         }
 
-        root_compressed = decompress_short(root_compressed);
+        // root_compressed = decompress_short(root_compressed);
 
         // 3. BFS to generate LOUDS bits and Labels
         let mut bits = BitVector::new();
@@ -568,43 +568,6 @@ impl LoudsTrie {
         self.bits_select.rank1(self.bits.bit_len() - 1)
     }
 
-    pub fn analyze_structure(&self) {
-        println!("LoudsTrie Analysis:");
-        println!("  - Total nodes: {}", self.node_count());
-        println!("  - Total bits: {:<.2} MB", bits_to_mb(self.bits.bit_len()));
-        println!(
-            "  - Total terminals: {:<.2} MB",
-            bits_to_mb(self.terminals.bit_len())
-        );
-        println!(
-            "  - Simple Labels: {:<.2} MB",
-            self.simple_labels.len() as f64 / 1024.0 / 1024.0
-        );
-        println!(
-             "  - Complex Labels (16-bit): {:<.2} MB ({} items)",
-             self.complex_labels_16.len() as f64 * 2.0 / 1024.0 / 1024.0,
-             self.complex_labels_16.len()
-         );
-         println!(
-             "  - Complex Labels (32-bit): {:<.2} MB ({} items)",
-             self.complex_labels_32.len() as f64 * 4.0 / 1024.0 / 1024.0,
-             self.complex_labels_32.len()
-         );
-         println!(
-             "  - Complex Is 16 BitMap: {:<.2} MB",
-             bits_to_mb(self.complex_is_16.bit_len())
-         );
-         println!(
-             "  - Palette: {:<.2} MB ({} items)",
-             self.label_palette.len() as f64 * 4.0 / 1024.0 / 1024.0,
-             self.label_palette.len()
-         );
-        println!(
-            "  - Label store (u8): {:<.2} MB",
-            bits_to_mb(self.label_store.len() as u64 * 8)
-        );
-    }
-
     pub fn size_on_disk(&self) -> usize {
         let bits_bytes = self.bits.block_len() * size_of::<usize>();
         let terminals_bytes = self.terminals.block_len() * size_of::<usize>();
@@ -628,6 +591,72 @@ impl LoudsTrie {
             + label_store_bytes
             + label_type_bytes
     }
+
+    pub fn analyze_structure(&self) {
+        println!("LoudsTrie Analysis:");
+        println!("  - Total nodes: {}", self.node_count());
+        println!("  - Total bits: {:<.2} MB", bits_to_mb(self.bits.bit_len()));
+        println!(
+            "  - Total terminals: {:<.2} MB",
+            bits_to_mb(self.terminals.bit_len())
+        );
+        println!(
+            "  - Simple Labels: {:<.2} MB",
+            self.simple_labels.len() as f64 / 1024.0 / 1024.0
+        );
+        println!(
+             "  - Complex Labels (16-bit): {:<.2} MB ({} items)",
+             self.complex_labels_16.len() as f64 * 2.0 / 1024.0 / 1024.0,
+             self.complex_labels_16.len()
+         );
+         println!(
+             "  - Complex Labels (32-bit): {:<.2} MB ({} items)",
+             self.complex_labels_32.len() as f64 * 4.0 / 1024.0 / 1024.0,
+             self.complex_labels_32.len()
+         );
+         if !self.complex_labels_32.is_empty() {
+             let mut vals = self.complex_labels_32.clone();
+             vals.sort_unstable();
+             let avg = vals.iter().map(|&x| x as f64).sum::<f64>() / vals.len() as f64;
+             let median = if vals.len() % 2 == 0 {
+                 (vals[vals.len() / 2 - 1] as f64 + vals[vals.len() / 2] as f64) / 2.0
+             } else {
+                 vals[vals.len() / 2] as f64
+             };
+             println!("    - Value Average: {:.2}, Median: {:.2}", avg, median);
+
+             let mut diffs: Vec<i64> = self.complex_labels_32.windows(2)
+                 .map(|w| (w[1] as i64 - w[0] as i64))
+                 .collect();
+             if !diffs.is_empty() {
+                 let diff_avg = diffs.iter().map(|&x| x as f64).sum::<f64>() / diffs.len() as f64;
+                 diffs.sort_unstable();
+                 let diff_median = if diffs.len() % 2 == 0 {
+                     (diffs[diffs.len() / 2 - 1] as f64 + diffs[diffs.len() / 2] as f64) / 2.0
+                 } else {
+                     diffs[diffs.len() / 2] as f64
+                 };
+                 println!("    - Consecutive Diff Average: {:.2}, Median: {:.2}", diff_avg, diff_median);
+             }
+         }
+         println!(
+             "  - Complex Is 16 BitMap: {:<.2} MB",
+             bits_to_mb(self.complex_is_16.bit_len())
+         );
+         println!(
+             "  - Palette: {:<.2} MB ({} items)",
+             self.label_palette.len() as f64 * 4.0 / 1024.0 / 1024.0,
+             self.label_palette.len()
+         );
+        println!(
+            "  - Label store (u8): {:<.2} MB",
+            bits_to_mb(self.label_store.len() as u64 * 8)
+        );
+
+        println!("Full size on disk: {:<.2} MB",
+            self.size_on_disk() as f64 / 1024.0 / 1024.0)
+    }
+
 }
 
 fn bits_to_mb(bits: u64) -> f64 {
