@@ -71,7 +71,6 @@ async function main() {
     onSearch: async (query: string) => {
       const pos = await api.getStarCoords(primaryModule, query)
       if (pos) {
-        console.log("Fetched star coordinates from API:", pos);
         console.log(`Found star "${query}": (${pos.x}, ${pos.y}, ${pos.z})`);
         galaxy.setTarget(new Vector3(pos.x, pos.y, pos.z));
 
@@ -100,7 +99,7 @@ async function main() {
     }
   })
 
-  fetch("/data/neutron_stars0.bin")
+  fetch(`${import.meta.env.BASE_URL}data/neutron_stars0.bin`)
     .then(res => res.arrayBuffer())
     .then(async starBuffer => {
       // Use SharedArrayBuffer for star data to share between main thread and worker
@@ -113,14 +112,14 @@ async function main() {
       await wasmWorker.setStars(new Float32Array(sab));
     })
 
-  fetch("/data/search_trie.bin")
+  fetch(`${import.meta.env.BASE_URL}data/search_trie.bin`)
     .then(res => res.arrayBuffer())
     .then(trieBuffer => {
       primaryModule.set_trie(new Uint8Array(trieBuffer))
       console.log("Search trie loaded.");
     });
 
-  fetch("/data/star_kdtree.bin")
+  fetch(`${import.meta.env.BASE_URL}data/star_kdtree.bin`)
     .then(res => res.arrayBuffer())
     .then(async kdtreeBuffer => {
       let sab = new SharedArrayBuffer(kdtreeBuffer.byteLength);

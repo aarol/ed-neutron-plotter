@@ -16,23 +16,10 @@ export function vec3fromCoords(coords: ApiCoords): Vector3 {
   return new Vector3(coords.x, coords.y, coords.z);
 }
 
-function wasmCoordsToCoordsObj(coords: wasm.Coords): ApiCoords {
-  return {
-    x: coords.x,
-    y: coords.y,
-    z: coords.z,
-  }
-}
-
-async function getStarCoords(wasmModule: wasm.Module,star: string): Promise<ApiCoords | null> {
+async function getStarCoords(wasmModule: wasm.Module, star: string): Promise<ApiCoords | null> {
   // First try to get coordinates from the wasm module's searcher
-  let wasmCoords = wasmModule.get_coords_for_star(star);
-  if (wasmCoords) {
-    return wasmCoordsToCoordsObj(wasmCoords);
-  }
-
   // If not found, fall back to the API
-  return await getStarCoordsFromApi(star);
+  return wasmModule.get_coords_for_star(star) ?? await getStarCoordsFromApi(star);
 }
 
 async function getStarCoordsFromApi(star: string): Promise<ApiCoords | null> {

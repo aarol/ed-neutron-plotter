@@ -47,13 +47,14 @@ export class Galaxy {
     window.addEventListener('resize', this.onWindowResize.bind(localThis));
 
     const cubeTextureLoader = new CubeTextureLoader();
+    const base = import.meta.env.BASE_URL;
     const texture = await cubeTextureLoader.loadAsync([
-      '/skybox/front.png',
-      '/skybox/back.png',
-      '/skybox/top.png',
-      '/skybox/bottom.png',
-      '/skybox/left.png',
-      '/skybox/right.png',
+      `${base}skybox/front.png`,
+      `${base}skybox/back.png`,
+      `${base}skybox/top.png`,
+      `${base}skybox/bottom.png`,
+      `${base}skybox/left.png`,
+      `${base}skybox/right.png`,
     ])
 
     this.scene.background = texture;
