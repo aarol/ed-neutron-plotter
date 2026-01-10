@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::mem::size_of;
 
@@ -1190,6 +1191,15 @@ mod tests {
         assert!(trie.find("B").is_some());
         assert!(trie.find("C").is_none());
         assert!(trie.find("AB").is_none());
+    }
+
+    #[test]
+    fn test_louds_bits() {
+        let mut words = vec!["ROW", "ROM", "ROMAN"];
+        words.sort();
+        let (trie, _) = LoudsTrie::new(&words);
+        let bits_str = trie.bits.iter().map(|b| if b { '1' } else { '0' }).collect::<String>();
+        assert_eq!(bits_str, "10101101000");
     }
 
     #[test]

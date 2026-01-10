@@ -40,7 +40,7 @@ impl Module {
 
     pub fn suggest_words(&self, prefix: &str, num_suggestions: usize) -> Vec<String> {
         match self.trie {
-            Some(ref trie) => trie.suggest(prefix, num_suggestions).into_iter().collect(),
+            Some(ref trie) => trie.suggest(prefix, num_suggestions),
             None => vec![],
         }
     }

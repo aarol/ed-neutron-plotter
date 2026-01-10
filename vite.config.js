@@ -10,4 +10,5 @@ export default {
       "Cross-Origin-Opener-Policy": "same-origin"
     }
   },
+  base: "/ed-neutron-plotter/"
 };
