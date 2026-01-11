@@ -7,15 +7,12 @@ use succinct::{
     select::Select0Support,
 };
 
-/// A LOUDS (Level-Order Unary Degree Sequence) Trie implementation with radix compression
+/// A LOUDS (Level-Order Unary Degree Sequence) Trie implementation with radix compression.
 /// The child-parent hierarchy is encoded in a bit-vector for minimal space usage.
 ///
-/// The rank/select structures are computed at load-time and are not stored on disk.
-///
-/// The labels on the edges are stored separately, with 1-byte labels in a simple array
-/// and longer labels stored as (u32) offsets/lengths into a label store.
-///
-/// Currently, the largest space bottleneck is the complex labels array
+/// Labels use a hybrid palette system: frequent (offset, len) pairs are stored in a palette
+/// (8-bit index for top 256, 16-bit for rest), while rare labels use direct offset and length.
+/// Rank/select structures are computed at load-time and not stored on disk.
 pub struct LoudsTrie {
     bits: succinct::BitVector<u64>,
     bits_select: succinct::select::BinSearchSelect<JacobsonRank<BitVector<u64>>>,
