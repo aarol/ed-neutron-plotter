@@ -7,7 +7,7 @@
 use std::{
     collections::BTreeSet,
     fs::File,
-    io::{self, BufRead, Read, Write},
+    io::{self, BufRead, BufWriter, Read, Write},
     path::Path,
 };
 
@@ -86,8 +86,13 @@ fn main() -> io::Result<()> {
         .iter()
         .filter_map(|system| system.searchable.then(|| system.name.as_str()))
         .collect();
-    let (trie, coords_indices) = LoudsTrie::new(&str_keys);
 
+    let mut trie_file = File::create(out_dir.join("search_trie.bin"))?;
+    let mut trie_file_buf = BufWriter::new(&mut trie_file);
+    let coords_indices = LoudsTrie::build(&str_keys, &mut trie_file_buf)?;
+    trie_file_buf.flush()?;
+    drop(trie_file_buf);
+    
     let star_coords: Vec<[f32; 3]> = system_set.iter().map(|s| s.coords.to_slice()).collect();
 
     // Map from trie order to original coord order
@@ -118,6 +123,9 @@ fn main() -> io::Result<()> {
 
     //     p.write_to_file(&mut file).unwrap();
     // });
+    let mut trie_buf = vec![];
+    File::open(out_dir.join("search_trie.bin"))?.read_to_end(&mut trie_buf)?;
+    let trie = LoudsTrie::from_bytes(&trie_buf);
 
     for star in trie.suggest("Speam", 10) {
         println!("  - {}: {:?}", star, trie.find(&star));
@@ -129,11 +137,6 @@ fn main() -> io::Result<()> {
         "Uses {:.1} MB of space",
         trie.size_on_disk() as f64 / 1024.0 / 1024.0
     );
-
-    // Write trie to file
-    let mut trie_file = File::create(out_dir.join("search_trie.bin"))?;
-    let trie_bytes: Vec<u8> = trie.into();
-    trie_file.write_all(&trie_bytes)?;
 
     Ok(())
 }
@@ -307,7 +310,7 @@ fn analyze_trie() -> io::Result<()> {
 
     let mut buf = vec![];
     file.read_to_end(&mut buf)?;
-    let trie = LoudsTrie::from(buf.as_ref());
+    let trie = LoudsTrie::from_bytes(&buf);
     // println!("Trie has {} nodes", trie());
 
     // Test contains

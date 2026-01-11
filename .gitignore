@@ -25,4 +25,5 @@ dist-ssr
 
 systems_neutron.json
 public/data/*.bin
+public/data/*.txt
 .claude

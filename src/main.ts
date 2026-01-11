@@ -26,7 +26,12 @@ async function main() {
 
   function onSuggest(prefix: string) {
     if (primaryModule) {
-      return primaryModule.suggest_words(prefix, 10);
+
+      console.time("trie-suggest");
+      const trieResults = primaryModule.suggest_words(prefix, 10);
+      console.timeEnd("trie-suggest");
+
+      return trieResults;
     }
     return [];
   }

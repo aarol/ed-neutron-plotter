@@ -1,11 +1,14 @@
 use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::mem::size_of;
+use std::ops::RangeFull;
 
 use succinct::{
     BinSearchSelect, BitRankSupport, BitVec, BitVecPush, BitVector, JacobsonRank, Select1Support,
     select::Select0Support,
 };
+
+type BitSlice<'a> = succinct::bit_vec::BitSlice<'a, [u64]>;
 
 /// A LOUDS (Level-Order Unary Degree Sequence) Trie implementation with radix compression.
 /// The child-parent hierarchy is encoded in a bit-vector for minimal space usage.
@@ -13,29 +16,29 @@ use succinct::{
 /// Labels use a hybrid palette system: frequent (offset, len) pairs are stored in a palette
 /// (8-bit index for top 256, 16-bit for rest), while rare labels use direct offset and length.
 /// Rank/select structures are computed at load-time and not stored on disk.
-pub struct LoudsTrie {
-    bits: succinct::BitVector<u64>,
-    bits_select: succinct::select::BinSearchSelect<JacobsonRank<BitVector<u64>>>,
-    terminals: succinct::BitVector<u64>,
-    terminals_rank: JacobsonRank<BitVector<u64>>,
+pub struct LoudsTrie<'a> {
+    bits: BitSlice<'a>,
+    bits_select: succinct::select::BinSearchSelect<JacobsonRank<BitSlice<'a>>>,
+    terminals: BitSlice<'a>,
+    terminals_rank: JacobsonRank<BitSlice<'a>>,
 
     // Hybrid Palette Fields
-    complex_labels_8: Vec<u8>,               // Indices 0..255
-    complex_labels_16: Vec<u16>,             // Indices 256..65535
-    complex_labels_32: Vec<u32>,             // Stores direct (offset, len)
-    complex_is_16: succinct::BitVector<u64>, // 1 = palette index, 0 = direct pointer
-    complex_is_16_rank: JacobsonRank<BitVector<u64>>,
-    complex_is_8: succinct::BitVector<u64>,  // 1 = 8-bit index, 0 = 16-bit index
-    complex_is_8_rank: JacobsonRank<BitVector<u64>>,
-    label_palette: Vec<u32>, // The actual (offset, len) for the palette indices
+    complex_labels_8: &'a [u8],   // Indices 0..255
+    complex_labels_16: &'a [u16], // Indices 256..65535
+    complex_labels_32: &'a [u32], // Stores direct (offset, len)
+    complex_is_16: BitSlice<'a>,  // 1 = palette index, 0 = direct pointer
+    complex_is_16_rank: JacobsonRank<BitSlice<'a>>,
+    complex_is_8: BitSlice<'a>, // 1 = 8-bit index, 0 = 16-bit index
+    complex_is_8_rank: JacobsonRank<BitSlice<'a>>,
+    label_palette: &'a [u32], // The actual (offset, len) for the palette indices
 
-    label_store: Vec<u8>,
+    label_store: &'a [u8],
 }
 
-impl LoudsTrie {
+impl<'a> LoudsTrie<'a> {
     /// Builds a LOUDS trie from a sorted list of strings.
     /// Returns the trie and a mapping from input indices to trie IDs.
-    pub fn new(keys: &[&str]) -> (Self, Vec<usize>) {
+    pub fn build(keys: &[&str], output: &mut dyn std::io::Write) -> std::io::Result<Vec<usize>> {
         assert!(!keys.is_empty());
         assert!(
             keys.windows(2).all(|w| w[0] <= w[1]),
@@ -74,7 +77,6 @@ impl LoudsTrie {
         }
 
         fn compress(node: TempNode) -> CompressedNode {
-
             // We can play with these but they haven't proved to be effective
             const MAX_SIMPLE_MERGE_LABEL_LEN: usize = 9999;
             const MAX_MERGE_CHILDREN: usize = 1;
@@ -86,9 +88,7 @@ impl LoudsTrie {
                 let mut label = vec![byte];
 
                 // Try to merge child into this edge
-                while c_child.children.len() == 1 
-                    && !c_child.is_terminal 
-                {
+                while c_child.children.len() == 1 && !c_child.is_terminal {
                     let next_len = c_child.children[0].0.len();
                     if label.len() + next_len > min(MAX_SIMPLE_MERGE_LABEL_LEN, 255) {
                         break;
@@ -97,15 +97,18 @@ impl LoudsTrie {
                     label.extend(next_label);
                     c_child = next_node;
                 }
-                
-                if !c_child.is_terminal 
-                   && c_child.children.len() > 1 
-                   && c_child.children.len() <= MAX_MERGE_CHILDREN
-                   && label.len() <= MAX_MERGE_LABEL_LEN
+
+                if !c_child.is_terminal
+                    && c_child.children.len() > 1
+                    && c_child.children.len() <= MAX_MERGE_CHILDREN
+                    && label.len() <= MAX_MERGE_LABEL_LEN
                 {
                     // Check if merging is possible for all children (label length limit)
-                    let can_merge = c_child.children.iter().all(|(l, _)| label.len() + l.len() <= 255);
-                    
+                    let can_merge = c_child
+                        .children
+                        .iter()
+                        .all(|(l, _)| label.len() + l.len() <= 255);
+
                     if can_merge {
                         for (sub_label, sub_node) in c_child.children {
                             let mut new_lbl = label.clone();
@@ -225,46 +228,20 @@ impl LoudsTrie {
             }
         }
 
-        // Helper to create robust JacobsonRank even for small bitvectors
-        fn create_rank(bv: &BitVector<u64>) -> JacobsonRank<BitVector<u64>> {
-            let mut padded = bv.clone();
-            // Pad to ensure we have at least 1024 bits to avoid potential divide-by-zero in succinct crate for small inputs
-            if padded.bit_len() < 1024 {
-                let current_len = padded.bit_len();
-                for _ in 0..(1024 - current_len) {
-                    padded.push_bit(false);
-                }
-            }
-            JacobsonRank::new(padded)
-        }
+        Self::write_to_file(
+            &bits,
+            &terminals,
+            &complex_labels_8,
+            &complex_labels_16,
+            &complex_labels_32,
+            &complex_is_16,
+            &complex_is_8,
+            &label_palette,
+            &new_store,
+            output,
+        )?;
 
-        let rank = create_rank(&bits);
-        let select = BinSearchSelect::new(rank);
-        
-        let terminals_rank = create_rank(&terminals);
-        let complex_is_16_rank = create_rank(&complex_is_16);
-        let complex_is_8_rank = create_rank(&complex_is_8);
-
-        (
-            Self {
-                bits,
-                terminals,
-                bits_select: select,
-                
-                complex_labels_8,
-                complex_labels_16,
-                complex_labels_32,
-                complex_is_16,
-                complex_is_16_rank,
-                complex_is_8,
-                complex_is_8_rank,
-                label_palette,
-
-                label_store: new_store,
-                terminals_rank,
-            },
-            coords_indices,
-        )
+        Ok(coords_indices)
     }
 
     // Returns the bit-index of the first child of the node at `index`.
@@ -316,7 +293,8 @@ impl LoudsTrie {
         // The label for the k-th '1' (node k) is at index k-2
         let complex_idx = r1 - 2;
 
-        let packed = if self.complex_is_16.bit_len() > 0 && self.complex_is_16.get_bit(complex_idx) {
+        let packed = if self.complex_is_16.bit_len() > 0 && self.complex_is_16.get_bit(complex_idx)
+        {
             // It's in the palette
             let palette_idx = if self.complex_is_8.get_bit(complex_idx) {
                 let rank8 = self.complex_is_8_rank.rank1(complex_idx);
@@ -332,7 +310,7 @@ impl LoudsTrie {
             let rank32 = complex_idx + 1 - self.complex_is_16_rank.rank1(complex_idx);
             self.complex_labels_32[(rank32 - 1) as usize]
         } else {
-             return &[];
+            return &[];
         };
 
         let len = (packed & 0xFF) as usize;
@@ -527,14 +505,14 @@ impl LoudsTrie {
     pub fn size_on_disk(&self) -> usize {
         let bits_bytes = self.bits.block_len() * size_of::<usize>();
         let terminals_bytes = self.terminals.block_len() * size_of::<usize>();
-        
+
         let complex_8_bytes = self.complex_labels_8.len();
         let complex_16_bytes = self.complex_labels_16.len() * size_of::<u16>();
         let complex_32_bytes = self.complex_labels_32.len() * size_of::<u32>();
         let complex_is_16_bytes = self.complex_is_16.block_len() * size_of::<usize>();
         let complex_is_8_bytes = self.complex_is_8.block_len() * size_of::<usize>();
         let palette_bytes = self.label_palette.len() * size_of::<u32>();
-        
+
         let label_store_bytes = self.label_store.len();
 
         bits_bytes
@@ -556,8 +534,8 @@ impl LoudsTrie {
             "  - Total terminals: {:<.2} MB",
             bits_to_mb(self.terminals.bit_len())
         );
-        let total_labels = self.complex_labels_8.len() 
-            + self.complex_labels_16.len() 
+        let total_labels = self.complex_labels_8.len()
+            + self.complex_labels_16.len()
             + self.complex_labels_32.len();
 
         println!(
@@ -567,18 +545,18 @@ impl LoudsTrie {
             (self.complex_labels_8.len() as f64 / total_labels as f64) * 100.0
         );
         println!(
-             "  - Labels (16-bit Palette): {:<.2} MB ({} items, {:.1}% total)",
-             self.complex_labels_16.len() as f64 * 2.0 / 1024.0 / 1024.0,
-             self.complex_labels_16.len(),
-             (self.complex_labels_16.len() as f64 / total_labels as f64) * 100.0
-         );
-         println!(
-             "  - Labels (32-bit Raw): {:<.2} MB ({} items, {:.1}% total)",
-             self.complex_labels_32.len() as f64 * 4.0 / 1024.0 / 1024.0,
-             self.complex_labels_32.len(),
-             (self.complex_labels_32.len() as f64 / total_labels as f64) * 100.0
-         );
-         println!(
+            "  - Labels (16-bit Palette): {:<.2} MB ({} items, {:.1}% total)",
+            self.complex_labels_16.len() as f64 * 2.0 / 1024.0 / 1024.0,
+            self.complex_labels_16.len(),
+            (self.complex_labels_16.len() as f64 / total_labels as f64) * 100.0
+        );
+        println!(
+            "  - Labels (32-bit Raw): {:<.2} MB ({} items, {:.1}% total)",
+            self.complex_labels_32.len() as f64 * 4.0 / 1024.0 / 1024.0,
+            self.complex_labels_32.len(),
+            (self.complex_labels_32.len() as f64 / total_labels as f64) * 100.0
+        );
+        println!(
             "  - Complex Is 16 BitMap: {:<.2} MB",
             bits_to_mb(self.complex_is_16.bit_len())
         );
@@ -586,255 +564,283 @@ impl LoudsTrie {
             "  - Complex Is 8 BitMap: {:<.2} MB",
             bits_to_mb(self.complex_is_8.bit_len())
         );
-         println!(
-             "  - Palette: {:<.2} MB ({} items)",
-             self.label_palette.len() as f64 * 4.0 / 1024.0 / 1024.0,
-             self.label_palette.len()
-         );
+        println!(
+            "  - Palette: {:<.2} MB ({} items)",
+            self.label_palette.len() as f64 * 4.0 / 1024.0 / 1024.0,
+            self.label_palette.len()
+        );
         println!(
             "  - Label store (u8): {:<.2} MB",
             bits_to_mb(self.label_store.len() as u64 * 8)
         );
 
-        println!("Full size on disk: {:<.2} MB",
-            self.size_on_disk() as f64 / 1024.0 / 1024.0)
+        println!(
+            "Full size on disk: {:<.2} MB",
+            self.size_on_disk() as f64 / 1024.0 / 1024.0
+        )
     }
 
-}
-
-fn bits_to_mb(bits: u64) -> f64 {
-    bits as f64 / 8.0 / 1024.0 / 1024.0
-}
-
-impl Into<Vec<u8>> for LoudsTrie {
-    fn into(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-
+    fn write_to_file(
+        bits: &BitVector,
+        terminals: &BitVector,
+        complex_labels_8: &[u8],
+        complex_labels_16: &[u16],
+        complex_labels_32: &[u32],
+        complex_is_16: &BitVector,
+        complex_is_8: &BitVector,
+        label_palette: &[u32],
+        label_store: &[u8],
+        output: &mut dyn std::io::Write,
+    ) -> std::io::Result<()> {
         // Serialize bits
         let mut bits_u64s = vec![];
-        for i in 0..self.bits.block_len() {
-            let block = self.bits.get_block(i);
+        for i in 0..bits.block_len() {
+            let block = bits.get_block(i);
             bits_u64s.extend_from_slice(&block.to_le_bytes());
         }
-        let bits_len = bits_u64s.len() as u32;
-        bytes.extend_from_slice(&bits_len.to_le_bytes());
-        bytes.extend_from_slice(&bits_u64s);
+        let bits_bit_len = bits.bit_len() as u64;
+        let bits_byte_len = bits_u64s.len() as u64;
+        output.write_all(&bits_bit_len.to_le_bytes())?;
+        output.write_all(&bits_byte_len.to_le_bytes())?;
+        output.write_all(&bits_u64s)?;
 
         // Serialize terminals
         let mut terminals_bytes = vec![];
-        for i in 0..self.terminals.block_len() {
-            let block = self.terminals.get_block(i);
+        for i in 0..terminals.block_len() {
+            let block = terminals.get_block(i);
             terminals_bytes.extend_from_slice(&block.to_le_bytes());
         }
-        let terminals_len = terminals_bytes.len() as u32;
-        bytes.extend_from_slice(&terminals_len.to_le_bytes());
-        bytes.extend_from_slice(&terminals_bytes);
+        let terminals_bit_len = terminals.bit_len() as u64;
+        let terminals_byte_len = terminals_bytes.len() as u64;
+        output.write_all(&terminals_bit_len.to_le_bytes())?;
+        output.write_all(&terminals_byte_len.to_le_bytes())?;
+        output.write_all(&terminals_bytes)?;
 
         // Serialize complex_labels (hybrid)
-        
+
         // 0. complex_labels_8 (u8)
-        let c8_len = self.complex_labels_8.len() as u32;
-        bytes.extend_from_slice(&c8_len.to_le_bytes());
-        bytes.extend_from_slice(&self.complex_labels_8);
+        let c8_len = complex_labels_8.len() as u32;
+        output.write_all(&c8_len.to_le_bytes())?;
+        output.write_all(&complex_labels_8)?;
+        // Pad to 8-byte alignment
+        let c8_total_bytes = 4 + c8_len as usize;
+        let remainder = c8_total_bytes % 8;
+        if remainder != 0 {
+            output.write_all(&vec![0u8; 8 - remainder])?;
+        }
 
         // 1. complex_labels_16 (u16)
-        let c16_len = self.complex_labels_16.len() as u32;
-        bytes.extend_from_slice(&c16_len.to_le_bytes());
-        for &val in &self.complex_labels_16 {
-            bytes.extend_from_slice(&val.to_le_bytes());
+        let c16_len = complex_labels_16.len() as u32;
+        output.write_all(&c16_len.to_le_bytes())?;
+        for &val in complex_labels_16 {
+            output.write_all(&val.to_le_bytes())?;
+        }
+        // Pad to 8-byte alignment
+        let c16_total_bytes = 4 + c16_len as usize * 2;
+        let remainder = c16_total_bytes % 8;
+        if remainder != 0 {
+            output.write_all(&vec![0u8; 8 - remainder])?;
         }
 
         // 2. complex_labels_32 (u32)
-        let c32_len = self.complex_labels_32.len() as u32;
-        bytes.extend_from_slice(&c32_len.to_le_bytes());
-        for &val in &self.complex_labels_32 {
-            bytes.extend_from_slice(&val.to_le_bytes());
+        let c32_len = complex_labels_32.len() as u32;
+        output.write_all(&c32_len.to_le_bytes())?;
+        for &val in complex_labels_32 {
+            output.write_all(&val.to_le_bytes())?;
         }
-        
+        // Pad to 8-byte alignment
+        let c32_total_bytes = 4 + c32_len as usize * 4;
+        let remainder = c32_total_bytes % 8;
+        if remainder != 0 {
+            output.write_all(&vec![0u8; 8 - remainder])?;
+        }
+
         // 3. complex_is_16 (BitVector)
         let mut cis16_bytes = vec![];
-        for i in 0..self.complex_is_16.block_len() {
-            let block = self.complex_is_16.get_block(i);
+        for i in 0..complex_is_16.block_len() {
+            let block = complex_is_16.get_block(i);
             cis16_bytes.extend_from_slice(&block.to_le_bytes());
         }
-        let cis16_len = cis16_bytes.len() as u32;
-        bytes.extend_from_slice(&cis16_len.to_le_bytes());
-        bytes.extend_from_slice(&cis16_bytes);
+        let cis16_bit_len = complex_is_16.bit_len() as u64;
+        let cis16_byte_len = cis16_bytes.len() as u64;
+        output.write_all(&cis16_bit_len.to_le_bytes())?;
+        output.write_all(&cis16_byte_len.to_le_bytes())?;
+        output.write_all(&cis16_bytes)?;
 
         // 3.5 complex_is_8 (BitVector)
         let mut cis8_bytes = vec![];
-        for i in 0..self.complex_is_8.block_len() {
-            let block = self.complex_is_8.get_block(i);
+        for i in 0..complex_is_8.block_len() {
+            let block = complex_is_8.get_block(i);
             cis8_bytes.extend_from_slice(&block.to_le_bytes());
         }
-        let cis8_len = cis8_bytes.len() as u32;
-        bytes.extend_from_slice(&cis8_len.to_le_bytes());
-        bytes.extend_from_slice(&cis8_bytes);
-        
+        let cis8_bit_len = complex_is_8.bit_len() as u64;
+        let cis8_byte_len = cis8_bytes.len() as u64;
+        output.write_all(&cis8_bit_len.to_le_bytes())?;
+        output.write_all(&cis8_byte_len.to_le_bytes())?;
+        output.write_all(&cis8_bytes)?;
+
         // 4. label_palette (u32)
-        let pal_len = self.label_palette.len() as u32;
-        bytes.extend_from_slice(&pal_len.to_le_bytes());
-        for &val in &self.label_palette {
-            bytes.extend_from_slice(&val.to_le_bytes());
+        let pal_len = label_palette.len() as u32;
+        output.write_all(&pal_len.to_le_bytes())?;
+        for &val in label_palette {
+            output.write_all(&val.to_le_bytes())?;
         }
 
         // Serialize label_store (u8)
-        let label_store_len = self.label_store.len() as u32;
-        bytes.extend_from_slice(&label_store_len.to_le_bytes());
-        bytes.extend_from_slice(&self.label_store);
-
-        bytes
+        let label_store_len = label_store.len() as u32;
+        output.write_all(&label_store_len.to_le_bytes())?;
+        output.write_all(label_store)?;
+        Ok(())
     }
-}
 
-impl From<&[u8]> for LoudsTrie {
-    fn from(value: &[u8]) -> Self {
+    pub fn from_bytes(value: &'a [u8]) -> Self {
         let mut offset = 0;
 
         // Deserialize bits
-        let bits_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        let mut bits_u64s = Vec::with_capacity(bits_len / 8);
-        for _ in 0..(bits_len / 8) {
-            let block = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
-            bits_u64s.push(block);
-            offset += 8;
-        }
-        let mut bits = BitVector::block_with_capacity(bits_len);
-        for &block in bits_u64s.iter() {
-            bits.push_block(block);
-        }
+        let bits_bit_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as u64;
+        offset += 8;
+        let bits_byte_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as usize;
+        offset += 8;
+        let bits_u64s: &'a [u64] = unsafe {
+            std::slice::from_raw_parts(
+                value[offset..offset + bits_byte_len].as_ptr() as *const u64,
+                bits_byte_len / 8,
+            )
+        };
+        offset += bits_byte_len;
+        let bits = BitSlice::new(bits_u64s, 0..bits_bit_len);
 
         // Deserialize terminals
-        let terminals_len =
-            u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        let mut terminals_u64s = Vec::with_capacity(terminals_len / 8);
-        for _ in 0..(terminals_len / 8) {
-            let block = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
-            terminals_u64s.push(block);
-            offset += 8;
-        }
-        let mut terminals = BitVector::block_with_capacity(terminals_len);
-        for &block in terminals_u64s.iter() {
-            terminals.push_block(block);
-        }
+        let terminals_bit_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as u64;
+        offset += 8;
+        let terminals_byte_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as usize;
+        offset += 8;
+        let terminals_u64s: &'a [u64] = unsafe {
+            std::slice::from_raw_parts(
+                value[offset..offset + terminals_byte_len].as_ptr() as *const u64,
+                terminals_byte_len / 8,
+            )
+        };
+        offset += terminals_byte_len;
+        let terminals = BitSlice::new(terminals_u64s, 0..terminals_bit_len);
 
         // Deserialize complex_labels (hybrid)
-        
+
         // 0. complex_labels_8
         let c8_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let complex_labels_8 = value[offset..offset + c8_len].to_vec();
+        let complex_labels_8 = &value[offset..offset + c8_len];
         offset += c8_len;
+        // Skip padding to next 8-byte alignment
+        let c8_total_bytes = 4 + c8_len;
+        let remainder = c8_total_bytes % 8;
+        if remainder != 0 {
+            offset += 8 - remainder;
+        }
 
         // 1. complex_labels_16
         let c16_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let mut complex_labels_16 = Vec::with_capacity(c16_len);
-        for _ in 0..c16_len {
-            let val = u16::from_le_bytes(value[offset..offset + 2].try_into().unwrap());
-            complex_labels_16.push(val);
-            offset += 2;
+        let c16_byte_len = c16_len * 2;
+        let complex_labels_16: &'a [u16] = unsafe {
+            std::slice::from_raw_parts(
+                value[offset..offset + c16_byte_len].as_ptr() as *const u16,
+                c16_len,
+            )
+        };
+        offset += c16_byte_len;
+        // Skip padding to next 8-byte alignment
+        let c16_total_bytes = 4 + c16_byte_len;
+        let remainder = c16_total_bytes % 8;
+        if remainder != 0 {
+            offset += 8 - remainder;
         }
 
         // 2. complex_labels_32
-        let c32_len =
-            u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        let c32_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let mut complex_labels_32 = Vec::with_capacity(c32_len);
-        for _ in 0..c32_len {
-            let val = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
-            complex_labels_32.push(val);
-            offset += 4;
-        }
-        
-        // 3. complex_is_16
-        let cis16_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        let mut cis16_u64s = Vec::with_capacity(cis16_len / 8);
-        for _ in 0..(cis16_len / 8) {
-            let block = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
-            cis16_u64s.push(block);
-            offset += 8;
-        }
-        let mut complex_is_16 = BitVector::block_with_capacity(cis16_len);
-        for &block in cis16_u64s.iter() {
-            complex_is_16.push_block(block);
+        let c32_byte_len = c32_len * 4;
+        let complex_labels_32: &'a [u32] = unsafe {
+            std::slice::from_raw_parts(
+                value[offset..offset + c32_byte_len].as_ptr() as *const u32,
+                c32_len,
+            )
+        };
+        offset += c32_byte_len;
+        // Skip padding to next 8-byte alignment
+        let c32_total_bytes = 4 + c32_byte_len;
+        let remainder = c32_total_bytes % 8;
+        if remainder != 0 {
+            offset += 8 - remainder;
         }
 
+        // 3. complex_is_16
+        let cis16_bit_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as u64;
+        offset += 8;
+        let cis16_byte_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as usize;
+        offset += 8;
+        let cis16_u64s: &'a [u64] = unsafe {
+            std::slice::from_raw_parts(
+                value[offset..offset + cis16_byte_len].as_ptr() as *const u64,
+                cis16_byte_len / 8,
+            )
+        };
+        offset += cis16_byte_len;
+        let complex_is_16 = BitSlice::new(cis16_u64s, 0..cis16_bit_len);
+
         // 3.5 complex_is_8
-        let cis8_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        let mut cis8_u64s = Vec::with_capacity(cis8_len / 8);
-        for _ in 0..(cis8_len / 8) {
-            let block = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap());
-            cis8_u64s.push(block);
-            offset += 8;
-        }
-        let mut complex_is_8 = BitVector::block_with_capacity(cis8_len);
-        for &block in cis8_u64s.iter() {
-            complex_is_8.push_block(block);
-        }
-        
+        let cis8_bit_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as u64;
+        offset += 8;
+        let cis8_byte_len = u64::from_le_bytes(value[offset..offset + 8].try_into().unwrap()) as usize;
+        offset += 8;
+        let cis8_u64s: &'a [u64] = unsafe {
+            std::slice::from_raw_parts(
+                value[offset..offset + cis8_byte_len].as_ptr() as *const u64,
+                cis8_byte_len / 8,
+            )
+        };
+        offset += cis8_byte_len;
+        let complex_is_8 = BitSlice::new(cis8_u64s, 0..cis8_bit_len);
+
         // 4. label_palette
-        let pal_len =
-            u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
+        let pal_len = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let mut label_palette = Vec::with_capacity(pal_len);
-        for _ in 0..pal_len {
-            let val = u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
-            label_palette.push(val);
-            offset += 4;
-        }
+        let pal_byte_len = pal_len * 4;
+        let label_palette = unsafe {
+            std::slice::from_raw_parts(
+                value[offset..offset + pal_byte_len].as_ptr() as *const u32,
+                pal_len,
+            )
+        };
+        offset += pal_byte_len;
 
         // Deserialize label_store
         let label_store_len =
             u32::from_le_bytes(value[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
-        let label_store = value[offset..offset + label_store_len].to_vec();
+        let label_store = &value[offset..offset + label_store_len];
 
-        // Helper closure for padding
-        let create_rank = |bv: &BitVector<u64>| -> JacobsonRank<BitVector<u64>> {
-            let mut padded = bv.clone();
-            if padded.bit_len() < 1024 {
-                let current_len = padded.bit_len();
-                for _ in 0..(1024 - current_len) {
-                    padded.push_bit(false);
-                }
-            }
-            JacobsonRank::new(padded)
-        };
-
-        let rank = create_rank(&bits);
-        let select = BinSearchSelect::new(rank);
-        
-        let terminals_rank = create_rank(&terminals);
-        let complex_is_16_rank = create_rank(&complex_is_16);
-        let complex_is_8_rank = create_rank(&complex_is_8);
+        let bits_for_rank = BitSlice::new(bits_u64s, RangeFull);
+        let terminals_for_rank = BitSlice::new(terminals_u64s, RangeFull);
+        let complex_is_16_for_rank = BitSlice::new(cis16_u64s, RangeFull);
+        let complex_is_8_for_rank = BitSlice::new(cis8_u64s, RangeFull);
 
         Self {
+            bits_select: BinSearchSelect::new(JacobsonRank::new(bits_for_rank)),
+            terminals_rank: JacobsonRank::new(terminals_for_rank),
+            complex_is_16_rank: JacobsonRank::new(complex_is_16_for_rank),
+            complex_is_8_rank: JacobsonRank::new(complex_is_8_for_rank),
             bits,
             terminals,
-            bits_select: select,
-            
+            complex_is_16,
+            complex_is_8,
             complex_labels_8,
             complex_labels_16,
             complex_labels_32,
-            complex_is_16,
-            complex_is_16_rank,
-            complex_is_8,
-            complex_is_8_rank,
             label_palette,
-
             label_store,
-            terminals_rank,
         }
     }
-}
-
-impl LoudsTrie {
-
 }
 
 #[allow(dead_code)]
@@ -1174,15 +1180,22 @@ fn compress_labels(labels: &[Vec<u8>]) -> (Vec<u8>, Vec<(u32, u32)>) {
     (super_buffer, result_mappings)
 }
 
+fn bits_to_mb(bits: u64) -> f64 {
+    bits as f64 / 8.0 / 1024.0 / 1024.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::LoudsTrie;
+    use succinct::BitVec; // Need this trait for bit_len() and get_bit()
 
     #[test]
     fn test_louds_trie() {
         let mut words: Vec<&str> = vec!["A", "B"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
 
         assert!(trie.find("A").is_some());
         assert!(trie.find("B").is_some());
@@ -1194,8 +1207,13 @@ mod tests {
     fn test_louds_bits() {
         let mut words = vec!["ROW", "ROM", "ROMAN"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
-        let bits_str = trie.bits.iter().map(|b| if b { '1' } else { '0' }).collect::<String>();
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
+        let mut bits_str = String::new();
+        for i in 0..trie.bits.bit_len() {
+            bits_str.push(if trie.bits.get_bit(i) { '1' } else { '0' });
+        }
         assert_eq!(bits_str, "10101101000");
     }
 
@@ -1203,7 +1221,9 @@ mod tests {
     fn test_suggest_basic() {
         let mut words: Vec<&str> = vec!["apple", "application", "apply", "banana", "band"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
 
         let suggestions = trie.suggest("app", 10);
         assert_eq!(suggestions.len(), 3);
@@ -1221,7 +1241,9 @@ mod tests {
     fn test_suggest_case_insensitive() {
         let mut words: Vec<&str> = vec!["Apple", "APPLICATION", "Apply", "Banana"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
 
         // Search with lowercase should find uppercase entries
         let suggestions = trie.suggest("app", 10);
@@ -1243,7 +1265,9 @@ mod tests {
     fn test_suggest_limit() {
         let mut words: Vec<&str> = vec!["a1", "a2", "a3", "a4", "a5"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
 
         let suggestions = trie.suggest("a", 3);
         assert_eq!(suggestions.len(), 3);
@@ -1256,7 +1280,9 @@ mod tests {
     fn test_suggest_no_match() {
         let mut words: Vec<&str> = vec!["apple", "banana"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
 
         let suggestions = trie.suggest("xyz", 10);
         assert!(suggestions.is_empty());
@@ -1269,7 +1295,9 @@ mod tests {
     fn test_suggest_empty_prefix() {
         let mut words: Vec<&str> = vec!["apple", "banana"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
 
         // Empty prefix should return all words (up to limit)
         // Note: Empty prefix starts from root which might include root itself
@@ -1286,7 +1314,9 @@ mod tests {
     fn test_suggest_exact_match() {
         let mut words: Vec<&str> = vec!["app", "apple", "application"];
         words.sort();
-        let (trie, _) = LoudsTrie::new(&words);
+        let mut buffer = Vec::new();
+        LoudsTrie::build(&words, &mut buffer).unwrap();
+        let trie = LoudsTrie::from_bytes(&buffer);
 
         // "app" is both a valid word and a prefix
         let suggestions = trie.suggest("app", 10);

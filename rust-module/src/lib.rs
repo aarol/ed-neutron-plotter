@@ -9,11 +9,72 @@ use wasm_bindgen::prelude::*;
 
 use crate::{system::Coords, trie::LoudsTrie};
 
+/// Binary search autocomplete over a sorted list of star names
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct BinarySearchAutocomplete {
+    /// Sorted list of star names (case-folded for search)
+    names: Vec<String>,
+    /// Original names preserving case
+    original_names: Vec<String>,
+}
+
+#[wasm_bindgen]
+impl BinarySearchAutocomplete {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Load names from newline-delimited string
+    pub fn set_names(&mut self, data: &str) {
+        let mut names: Vec<String> = data.lines().map(|s| s.to_string()).collect();
+        names.sort_unstable_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        self.original_names = names.clone();
+        self.names = names.iter().map(|s| s.to_lowercase()).collect();
+    }
+
+    /// Find suggestions using binary search
+    pub fn suggest(&self, prefix: &str, limit: usize) -> Vec<String> {
+        log_u32(self.names.len() as u32);
+        if self.names.is_empty() || limit == 0 {
+            return vec![];
+        }
+
+        let prefix_lower = prefix.to_lowercase();
+        
+        // Binary search for the first name >= prefix
+        let start_idx = self.names.partition_point(|name| name.as_str() < prefix_lower.as_str());
+        
+        let mut results = Vec::with_capacity(limit);
+        for i in start_idx..self.names.len() {
+            if !self.names[i].starts_with(&prefix_lower) {
+                break;
+            }
+            results.push(self.original_names[i].clone());
+            if results.len() >= limit {
+                break;
+            }
+        }
+        results
+    }
+
+    /// Find exact match and return its index
+    pub fn find(&self, name: &str) -> Option<u32> {
+        let name_lower = name.to_lowercase();
+        self.names.binary_search(&name_lower).ok().map(|i| i as u32)
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+}
+
 /// Stores the trie and other data needed for autocomplete and plotter
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct Module {
-    trie: Option<LoudsTrie>,
+    trie: Option<LoudsTrie<'static>>,
     stars: Option<Box<[Coords]>>,
     kdtree: Option<kdtree::CompactKdTree>,
 }
@@ -25,8 +86,12 @@ impl Module {
         Module::default()
     }
 
-    pub fn set_trie(&mut self, trie_data: &[u8]) {
-        self.trie = Some(LoudsTrie::from(trie_data));
+    /// Load trie data from a byte array
+    /// Should not be called more than once per Module instance
+    pub fn set_trie(&mut self, trie_data: Box<[u8]>) {
+        // Leak the boxed slice to get a 'static reference
+        // Safety: This memory will not be freed until the module is dropped
+        self.trie = Some(LoudsTrie::from_bytes(Box::leak(trie_data)));
     }
 
     pub fn set_stars(&mut self, stars: Box<[f32]>) {
@@ -38,6 +103,7 @@ impl Module {
         self.kdtree = Some(kdtree::CompactKdTree::from_bytes(kdtree_data));
     }
 
+    /// Suggest words using the trie
     pub fn suggest_words(&self, prefix: &str, num_suggestions: usize) -> Vec<String> {
         match self.trie {
             Some(ref trie) => trie.suggest(prefix, num_suggestions),
