@@ -2,12 +2,14 @@ import "./style.css";
 import { SearchBox } from "./search";
 import { Galaxy } from "./galaxy";
 import { RouteDialog } from "./route-dialog";
+import { JournalDialog } from "./journal/journal-dialog";
 import init, { Module } from "../rust-module/pkg";
 import { Vector3 } from "three/webgpu";
 import { api } from "./api";
 import * as Comlink from "comlink";
 import { WasmWorker as WasmWorkerAPI } from "./web-worker";
 import Worker from "./web-worker?worker"
+import { Journal } from "./journal/journal";
 
 async function main() {
   const galaxy = new Galaxy();
@@ -91,10 +93,19 @@ async function main() {
   });
 
   searchBox.mount(document.body);
+  const journal = new Journal({
+    onNewLocation: async (starName, coords) => {
+      console.log(`New location: ${starName} at (${coords.x}, ${coords.y}, ${coords.z})`);
+      galaxy.setTarget(new Vector3(coords.x / 1000, coords.y / 1000, coords.z / 1000));
+    }
+  });
+
+  const journalDialog = new JournalDialog(journal);
+  journalDialog.mount(document.body);
 
   window.addEventListener("keydown", async (event) => {
     if (event.key === "p") {
-      
+
       const start = await api.getStarCoords(primaryModule, "Sol");
       const end = await api.getStarCoords(primaryModule, "Colonia");
       const res = await wasmWorker.findRoute(start!, end!, Comlink.proxy(routeReportCallback))
