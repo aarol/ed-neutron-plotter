@@ -53,7 +53,7 @@ pub fn plot(
     ship: &Ship,
     kdtree: &CompactKdTree,
     send_report: impl Fn(Report),
-) -> Vec<Coords> {
+) -> Vec<u32> {
     send_report(Report {
         curr_best_route: vec![],
         distance: start_coords.dist(&end_coords),
@@ -109,10 +109,12 @@ pub fn plot(
                 .iter()
                 .max_by_key(|(_, i)| OrderedF32(heuristic(range, *i)))
             {
-                let best_route = reconstruct_path(&prev, *closest_star, stars);
+                let best_route = reconstruct_path(&prev, *closest_star);
+
+                let coords = best_route.iter().map(|id| stars[*id as usize]).collect();
 
                 send_report(Report {
-                    curr_best_route: best_route,
+                    curr_best_route: coords,
                     distance: stars[*closest_star as usize].dist(&end_coords),
                     depth,
                 });
@@ -167,29 +169,26 @@ pub fn plot(
     }
 
     if end_found {
-        reconstruct_path(&prev, end_idx, stars)
+        reconstruct_path(&prev, end_idx)
     } else {
         panic!("No route found")
     }
 }
 
-fn reconstruct_path(prev: &FxHashMap<u32, u32>, end_idx: u32, stars: &[Coords]) -> Vec<Coords> {
+fn reconstruct_path(prev: &FxHashMap<u32, u32>, end_idx: u32) -> Vec<u32> {
     let mut path = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut current = end_idx;
 
-    path.push(stars[current as usize]);
+    path.push(current);
     seen.insert(current);
 
     while let Some(&p) = prev.get(&current) {
         if seen.contains(&p) {
-            panic!(
-                "Loop detected in path reconstruction: {} already visited",
-                p
-            );
+            panic!("Loop detected in path reconstruction: {p} already visited",);
         }
         seen.insert(p);
-        path.push(stars[p as usize]);
+        path.push(p);
         current = p;
     }
 

@@ -127,7 +127,7 @@ impl Module {
         start: JsValue,
         end: JsValue,
         report_callback: &js_sys::Function,
-    ) -> Result<Box<[f32]>, JsValue> {
+    ) -> Result<Vec<JsValue>, JsValue> {
         let start = serde_wasm_bindgen::from_value::<CoordsSerde>(start)
             .map_err(|e| JsValue::from_str(&format!("Invalid start coords: {}", e)))?;
         let end = serde_wasm_bindgen::from_value::<CoordsSerde>(end)
@@ -170,8 +170,17 @@ impl Module {
         };
 
         let result_coords = plotter::plot(start, end, stars, &ship, kdtree, report_callback);
+        Ok(
+            result_coords.iter().map(|c| {
+                let coords = stars[*c as usize];
+                let key = self.trie.as_ref().expect("Trie loaded").reconstruct_key(*c as u64);
 
-        Ok(result_coords.iter().flat_map(|c| c.to_slice()).collect())
+                serde_wasm_bindgen::to_value(&RouteNode {
+                    coords: CoordsSerde::from(coords),
+                    name: key,
+                 }).expect("Failed to serialize route node")
+            }).collect()
+        )
     }
 }
 
@@ -187,6 +196,13 @@ extern "C" {
 // #[wasm_bindgen]
 pub fn init() {
     utils::set_panic_hook();
+}
+
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct RouteNode {
+    coords: CoordsSerde,
+    name: String,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
