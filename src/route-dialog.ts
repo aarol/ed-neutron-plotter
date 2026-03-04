@@ -51,6 +51,9 @@ export class RouteDialog {
   private fromSearchBox!: SearchBox;
   private toSearchBox!: SearchBox;
   private superchargedCheckbox!: HTMLInputElement;
+  private closeBtn!: HTMLButtonElement;
+  private cancelBtn!: HTMLButtonElement;
+  private generateBtn!: HTMLButtonElement;
   private onRouteGeneratedCallback?: (config: RouteConfig) => void;
   private isVisible: boolean = false;
 
@@ -80,14 +83,14 @@ export class RouteDialog {
       className: styles.title
     });
 
-    const closeBtn = createElement('button', {
+    this.closeBtn = createElement('button', {
       className: styles.closeBtn,
       children: ['×'],
       attributes: { type: 'button' }
     });
 
     header.appendChild(title);
-    header.appendChild(closeBtn);
+    header.appendChild(this.closeBtn);
 
     // Create form sections
     const fromSection = this.createFormSection('From:', 'from-container');
@@ -118,20 +121,20 @@ export class RouteDialog {
       className: styles.buttonGroup
     });
 
-    const cancelBtn = createElement('button', {
+    this.cancelBtn = createElement('button', {
       className: styles.cancelBtn,
       children: ['Cancel'],
       attributes: { type: 'button' }
     });
 
-    const generateBtn = createElement('button', {
+    this.generateBtn = createElement('button', {
       className: styles.generateBtn,
       children: ['Generate Route'],
       attributes: { type: 'button' }
     });
 
-    buttonGroup.appendChild(cancelBtn);
-    buttonGroup.appendChild(generateBtn);
+    buttonGroup.appendChild(this.cancelBtn);
+    buttonGroup.appendChild(this.generateBtn);
 
     // Assemble panel
     panel.appendChild(header);
@@ -182,14 +185,10 @@ export class RouteDialog {
   }
 
   private setupEventListeners(): void {
-    const closeBtn = this.panel.querySelector(`.${styles.closeBtn}`) as HTMLButtonElement;
-    const cancelBtn = this.panel.querySelector(`.${styles.cancelBtn}`) as HTMLButtonElement;
-    const generateBtn = this.panel.querySelector(`.${styles.generateBtn}`) as HTMLButtonElement;
-
     // Button click handlers
-    closeBtn.addEventListener('click', () => this.close());
-    cancelBtn.addEventListener('click', () => this.close());
-    generateBtn.addEventListener('click', () => this.handleGenerate());
+    this.closeBtn.addEventListener('click', () => this.close());
+    this.cancelBtn.addEventListener('click', () => this.close());
+    this.generateBtn.addEventListener('click', () => this.handleGenerate());
 
     // Escape key (global listener)
     document.addEventListener('keydown', (e) => {

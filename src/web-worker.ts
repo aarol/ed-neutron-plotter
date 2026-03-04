@@ -12,10 +12,10 @@ export class WasmWorker {
     })
   }
 
-  findRoute(start: ApiCoords, end: ApiCoords, reportCallback: (starData: Float32Array, distance: number, depth: number) => void): Float32Array| undefined {
+  findRoute(start: ApiCoords, end: ApiCoords, reportCallback: (starData: Float32Array, distance: number, depth: number) => void): Array<{ coords: ApiCoords, name: string }> {
     return this.wasmModule.find_route(start, end, (starData: Float32Array, distance: number, depth: number) => {
       reportCallback(starData, distance, depth);
-    });
+    }) as Array<{ coords: ApiCoords, name: string }>;
   }
 
   setStars(stars: Float32Array) {

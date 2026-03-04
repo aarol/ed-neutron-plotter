@@ -68,7 +68,8 @@ async function main() {
 
       const res = await wasmWorker.findRoute(start, end, Comlink.proxy(routeReportCallback))
       if (res) {
-        galaxy.setRoutePoints(res);
+        res.forEach(node => console.log(`Route node: ${node.name} at (${node.coords.x}, ${node.coords.y}, ${node.coords.z})`));
+        // galaxy.setRoutePoints(res);
       }
     }
   };
@@ -92,7 +93,24 @@ async function main() {
     }
   });
 
-  searchBox.mount(document.body);
+  const searchWrapper = document.createElement('div');
+  searchWrapper.className = 'search-wrapper';
+
+  searchBox.mount(searchWrapper);
+
+  // Standalone GPS icon — opens the journal dialog
+  const gpsIcon = document.createElement('div');
+  gpsIcon.className = 'gps-icon';
+  gpsIcon.title = 'Track in-game location';
+  gpsIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><circle cx="12" cy="12" r="3"/></svg>`;
+  gpsIcon.addEventListener('click', () => {
+    const dialog = document.getElementById('journalDialog') as HTMLDialogElement | null;
+    dialog?.showModal();
+  });
+  searchWrapper.appendChild(gpsIcon);
+
+  document.body.appendChild(searchWrapper);
+
   const journal = new Journal({
     onNewLocation: async (starName, coords) => {
       console.log(`New location: ${starName} at (${coords.x}, ${coords.y}, ${coords.z})`);
@@ -102,18 +120,6 @@ async function main() {
 
   const journalDialog = new JournalDialog(journal);
   journalDialog.mount(document.body);
-
-  window.addEventListener("keydown", async (event) => {
-    if (event.key === "p") {
-
-      const start = await api.getStarCoords(primaryModule, "Sol");
-      const end = await api.getStarCoords(primaryModule, "Colonia");
-      const res = await wasmWorker.findRoute(start!, end!, Comlink.proxy(routeReportCallback))
-      if (res) {
-        galaxy.setRoutePoints(res);
-      }
-    }
-  })
 
   fetch(`${import.meta.env.BASE_URL}data/neutron_stars0.bin`)
     .then(res => res.arrayBuffer())
