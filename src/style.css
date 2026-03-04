@@ -98,6 +98,78 @@ h1 {
   color: #888;
 }
 
+.target-info {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 6px 12px 6px 16px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.target-info__route-btn {
+  pointer-events: auto;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.2s ease, background 0.2s ease;
+  
+  background: transparent;
+  
+  padding: 0;
+  color: white;
+  margin-left: 2px;
+}
+
+.target-info__route-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.target-info__route-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.target-info__label {
+  color: rgba(255, 255, 255, 0.45);
+  margin-right: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.target-info__name {
+  font-weight: 600;
+  margin-right: 10px;
+}
+
+.target-info__coords {
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
 button {
   border-radius: 8px;
   border: 1px solid transparent;

@@ -121,6 +121,108 @@ impl Module {
         }
     }
 
+    /// Find the star that appears closest to a camera ray (i.e. best for click-picking).
+    ///
+    /// Parameters (all in kly, the same units as star data):
+    ///   ox/oy/oz          — ray origin (camera world position)
+    ///   dx/dy/dz          — ray direction (does not need to be normalised)
+    ///   angular_tolerance — half-angle threshold in radians; stars further than
+    ///                       this from the ray axis are ignored
+    ///
+    /// Algorithm:
+    ///   Sample N points along the ray with exponentially increasing spacing.
+    ///   At each sample, query the KD-tree within a sphere whose radius equals
+    ///   depth × angular_tolerance.  For every candidate star compute the true
+    ///   angular separation (perp_dist / depth) and keep the global minimum.
+    ///
+    /// Returns `{ name: string, coords: { x, y, z } }` or `null`.
+    #[wasm_bindgen]
+    pub fn find_star_near_ray(
+        &self,
+        ox: f32, oy: f32, oz: f32,
+        dx: f32, dy: f32, dz: f32,
+        angular_tolerance: f32,
+    ) -> JsValue {
+        let (trie, stars, kdtree) = match (&self.trie, &self.stars, &self.kdtree) {
+            (Some(t), Some(s), Some(k)) => (t, s, k),
+            _ => return JsValue::NULL,
+        };
+
+        // Normalise direction
+        let len = (dx * dx + dy * dy + dz * dz).sqrt();
+        if len < 1e-10 {
+            return JsValue::NULL;
+        }
+        let (ndx, ndy, ndz) = (dx / len, dy / len, dz / len);
+
+        let tolerance_sq = angular_tolerance * angular_tolerance;
+
+        let mut best_idx: Option<u32> = None;
+        let mut best_t: f32 = 0.0;
+        let mut best_ang_sq = f32::INFINITY;
+
+        // Exponentially-spaced samples
+        let mut t: f32 = 0.01;
+        let max_t: f32 = 240.0;
+
+        while t <= max_t {
+            let px = ox + ndx * t;
+            let py = oy + ndy * t;
+            let pz = oz + ndz * t;
+            let point = Coords([px, py, pz]);
+
+            // Sphere radius = angular_tolerance × depth, maximum of 50 ly
+            let radius = (t * angular_tolerance).max(0.050);
+            let candidates = kdtree.nearest_n_within(point, stars, radius, 32);
+
+            for (idx, _) in candidates {
+                let star = stars[idx as usize];
+
+                // Vector from ray origin to star
+                let tx = star.at(0) - ox;
+                let ty = star.at(1) - oy;
+                let tz = star.at(2) - oz;
+
+                // Projection along normalised direction
+                let t_proj = tx * ndx + ty * ndy + tz * ndz;
+                if t_proj <= 0.0 {
+                    continue; // behind camera
+                }
+
+                // Perpendicular distance squared
+                let perp_x = tx - ndx * t_proj;
+                let perp_y = ty - ndy * t_proj;
+                let perp_z = tz - ndz * t_proj;
+                let perp_sq = perp_x * perp_x + perp_y * perp_y + perp_z * perp_z;
+
+                // Angular separation squared (perp/depth)²
+                let ang_sq = perp_sq / (t_proj * t_proj);
+
+                if ang_sq <= tolerance_sq && ang_sq < best_ang_sq {
+                    best_ang_sq = ang_sq;
+                    best_idx = Some(idx);
+                    best_t = t_proj;
+                }
+            }
+
+            t += 0.050; // take a 50ly step
+        }
+
+        log(&format!("{best_t} Best star index: {:?}, angular separation²: {}", best_idx, best_ang_sq));
+        match best_idx {
+            Some(idx) => {
+                let coords = stars[idx as usize];
+                let name = trie.reconstruct_key(idx as u64);
+                serde_wasm_bindgen::to_value(&RouteNode {
+                    coords: CoordsSerde::from(coords),
+                    name,
+                })
+                .unwrap_or(JsValue::NULL)
+            }
+            None => JsValue::NULL,
+        }
+    }
+
     #[wasm_bindgen]
     pub fn find_route(
         &self,

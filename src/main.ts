@@ -4,7 +4,7 @@ import { Galaxy } from "./galaxy";
 import { RouteDialog } from "./route-dialog";
 import { JournalDialog } from "./journal/journal-dialog";
 import init, { Module } from "../rust-module/pkg";
-import { Vector3 } from "three/webgpu";
+import { Raycaster, Vector2, Vector3 } from "three/webgpu";
 import { api } from "./api";
 import * as Comlink from "comlink";
 import { WasmWorker as WasmWorkerAPI } from "./web-worker";
@@ -81,6 +81,7 @@ async function main() {
       if (pos) {
         console.log(`Found star "${query}": (${pos.x}, ${pos.y}, ${pos.z})`);
         galaxy.setTarget(new Vector3(pos.x, pos.y, pos.z));
+        setTargetInfo(query, pos.x, pos.y, pos.z);
 
         openRoutePanel(query);
       } else {
@@ -111,10 +112,88 @@ async function main() {
 
   document.body.appendChild(searchWrapper);
 
+  // Target info bar
+  const targetInfo = document.createElement('div');
+  targetInfo.className = 'target-info';
+  let currentTargetName = 'Sol';
+  const setTargetInfo = (name: string, x: number, y: number, z: number) => {
+    currentTargetName = name;
+    targetInfo.innerHTML =
+      `<span class="target-info__name">${name}</span>` +
+      `<span class="target-info__coords">(${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})</span>` +
+      `<button class="target-info__route-btn" title="Find route to target" aria-label="Plot route">` +
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">` +
+          `<path d="M320-360h80v-120h140v100l140-140-140-140v100H360q-17 0-28.5 11.5T320-520v160ZM480-80q-15 0-29.5-6T424-104L104-424q-12-12-18-26.5T80-480q0-15 6-29.5t18-26.5l320-320q12-12 26.5-18t29.5-6q15 0 29.5 6t26.5 18l320 320q12 12 18 26.5t6 29.5q0 15-6 29.5T856-424L536-104q-12 12-26.5 18T480-80ZM320-320l160 160 320-320-320-320-320 320 160 160Zm160-160Z"/>` +
+        `</svg>` +
+      `</button>`;
+  };
+  setTargetInfo('Sol', 0, 0, 0);
+  targetInfo.addEventListener('click', (e) => {
+    if ((e.target as Element).closest('.target-info__route-btn')) {
+      openRoutePanel(currentTargetName);
+    }
+  });
+  document.body.appendChild(targetInfo);
+
+  // -----------------------------------------------------------------------
+  // Star-click targeting
+  // Cast a ray from the camera through the clicked pixel; project it to the
+  // orbit-controls target depth and ask WASM for the nearest star.
+  // A small drag-distance threshold avoids false positives while orbiting.
+  // -----------------------------------------------------------------------
+  const raycaster = new Raycaster();
+  let pointerDownPos = new Vector2();
+  let isDragging = false;
+
+  galaxy.renderer.domElement.addEventListener('pointerdown', (e: PointerEvent) => {
+    pointerDownPos.set(e.clientX, e.clientY);
+    isDragging = false;
+  });
+
+  galaxy.renderer.domElement.addEventListener('pointermove', (e: PointerEvent) => {
+    if (e.buttons === 0) return;
+    const dx = e.clientX - pointerDownPos.x;
+    const dy = e.clientY - pointerDownPos.y;
+    if (dx * dx + dy * dy > 25) isDragging = true; // 5 px threshold
+  });
+
+  galaxy.renderer.domElement.addEventListener('pointerup', (e: PointerEvent) => {
+    if (isDragging) return;
+
+    // Convert to Normalised Device Coordinates [-1, 1]
+    const ndc = new Vector2(
+      (e.clientX / window.innerWidth)  *  2 - 1,
+      -(e.clientY / window.innerHeight) * 2 + 1,
+    );
+
+    raycaster.setFromCamera(ndc, galaxy.camera);
+
+    // Compute angular pick tolerance: ~8 px in screen space
+    // camera.fov is vertical (degrees); convert to radians per pixel
+    const fovRad = galaxy.camera.fov * (Math.PI / 180);
+    const angularTolerance = (fovRad / window.innerHeight) * 8;
+
+    const { origin, direction } = raycaster.ray;
+
+    // WASM returns { name, coords: { x, y, z } } or null
+    const hit = primaryModule.find_star_near_ray(
+      origin.x, origin.y, origin.z,
+      direction.x, direction.y, direction.z,
+      angularTolerance,
+    ) as { name: string; coords: { x: number; y: number; z: number } } | null;
+
+    if (hit) {
+      const { name, coords } = hit;
+      galaxy.setTarget(new Vector3(coords.x, coords.y, coords.z));
+      setTargetInfo(name, coords.x, coords.y, coords.z);
+    }
+  });
+
   const journal = new Journal({
     onNewLocation: async (starName, coords) => {
       console.log(`New location: ${starName} at (${coords.x}, ${coords.y}, ${coords.z})`);
       galaxy.setTarget(new Vector3(coords.x / 1000, coords.y / 1000, coords.z / 1000));
+      setTargetInfo(starName, coords.x / 1000, coords.y / 1000, coords.z / 1000);
     }
   });
 
