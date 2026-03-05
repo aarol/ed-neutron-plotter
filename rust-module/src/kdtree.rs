@@ -132,7 +132,6 @@ impl CompactKdTree {
         let tree_start = 4;
         let tree_end = tree_start + tree_len * 4;
         let tree_bytes = &data[tree_start..tree_end];
-
         let tree_slice: &[u32] =
             unsafe { std::slice::from_raw_parts(tree_bytes.as_ptr() as *const u32, tree_len) };
 
@@ -210,7 +209,7 @@ impl CompactKdTree {
         }
 
         let point = get_point(points, point_idx);
-        let dist_sq = squared_distance(&query, &point);
+        let dist_sq = query.dist_sq(&point);
 
         if dist_sq < *best_dist_sq {
             *best_dist_sq = dist_sq;
@@ -266,7 +265,7 @@ impl CompactKdTree {
         max_results: usize,
         results: &mut Vec<(u32, f32)>,
     ) {
-        if tree_idx >= self.tree.len() {
+        if tree_idx >= self.tree.len() || results.len() >= max_results {
             return;
         }
 
@@ -276,10 +275,13 @@ impl CompactKdTree {
         }
 
         let point = get_point(points, point_idx);
-        let dist_sq = squared_distance(&query, &point);
+        let dist_sq = query.dist_sq(&point);
 
         if dist_sq <= radius_sq {
             results.push((point_idx, dist_sq));
+            if results.len() >= max_results {
+                return;
+            }
         }
 
         let axis = depth % 3;
@@ -352,7 +354,7 @@ impl CompactKdTree {
         }
 
         let point = get_point(points, point_idx);
-        let dist_sq = squared_distance(&query, &point);
+        let dist_sq = query.dist_sq(&point);
 
         if dist_sq <= radius_sq {
             results.push((point_idx, dist_sq));
@@ -377,14 +379,6 @@ impl CompactKdTree {
 #[inline]
 fn get_point(points: &[Coords], idx: u32) -> Coords {
     points[idx as usize]
-}
-
-#[inline]
-fn squared_distance(a: &Coords, b: &Coords) -> f32 {
-    let dx = a.x() - b.x();
-    let dy = a.y() - b.y();
-    let dz = a.z() - b.z();
-    dx * dx + dy * dy + dz * dz
 }
 
 // =========================================================================

@@ -31,8 +31,8 @@ fn main() -> io::Result<()> {
         return analyze_trie();
     }
 
-    if std::env::args().any(|arg| arg.contains("parse_systems")) {
-        return parse_systems_rkyv();
+    if std::env::args().any(|arg| arg.contains("generate_rkyv")) {
+        return generate_systems_neutron_rkyv();
     }
 
     if std::env::args().any(|arg| arg.contains("parse_galaxy")) {
@@ -41,7 +41,7 @@ fn main() -> io::Result<()> {
 
     if !Path::new("systems.rkyv").exists() {
         println!("systems.rkyv not found, generating it first..");
-        parse_systems_rkyv()?;
+        generate_systems_neutron_rkyv()?;
     }
 
     let out_dir = std::path::Path::new("../public/data");
@@ -75,7 +75,7 @@ fn main() -> io::Result<()> {
                 name: sys.name.to_string(),
                 coords,
                 is_neutron_star: sys.is_neutron_star,
-                searchable: sys.searchable,
+                searchable: true,
             });
         });
     println!("Parsing complete. Contructing the trie..");
@@ -86,6 +86,8 @@ fn main() -> io::Result<()> {
         .iter()
         .filter_map(|system| system.searchable.then(|| system.name.as_str()))
         .collect();
+
+    assert!(str_keys.is_sorted());
 
     let mut trie_file = File::create(out_dir.join("search_trie.bin"))?;
     let mut trie_file_buf = BufWriter::new(&mut trie_file);
@@ -141,7 +143,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn parse_systems_rkyv() -> io::Result<()> {
+fn generate_systems_neutron_rkyv() -> io::Result<()> {
     let mut neutrons_file = File::open("systems_neutron.json").unwrap();
     let buf_reader = std::io::BufReader::new(&mut neutrons_file);
     println!("Processing systems_neutron.json..");

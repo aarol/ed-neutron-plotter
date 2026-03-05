@@ -84,6 +84,13 @@ impl Coords {
     pub fn z(&self) -> f32 {
         self.0[2]
     }
+
+    pub fn dist_sq(&self, o: &Coords) -> f32 {
+        let dx = self.x() - o.x();
+        let dy = self.y() - o.y();
+        let dz = self.z() - o.z();
+        dx * dx + dy * dy + dz * dz
+    }
 }
 
 impl Display for Coords {

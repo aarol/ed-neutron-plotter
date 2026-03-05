@@ -42,10 +42,12 @@ impl BinarySearchAutocomplete {
         }
 
         let prefix_lower = prefix.to_lowercase();
-        
+
         // Binary search for the first name >= prefix
-        let start_idx = self.names.partition_point(|name| name.as_str() < prefix_lower.as_str());
-        
+        let start_idx = self
+            .names
+            .partition_point(|name| name.as_str() < prefix_lower.as_str());
+
         let mut results = Vec::with_capacity(limit);
         for i in start_idx..self.names.len() {
             if !self.names[i].starts_with(&prefix_lower) {
@@ -95,7 +97,6 @@ impl Module {
     }
 
     pub fn set_stars(&mut self, stars: Box<[f32]>) {
-        // Convert flat f32 array to coordinates without copying
         self.stars = Some(stars.chunks_exact(3).map(Coords::from_slice).collect());
     }
 
@@ -139,8 +140,12 @@ impl Module {
     #[wasm_bindgen]
     pub fn find_star_near_ray(
         &self,
-        ox: f32, oy: f32, oz: f32,
-        dx: f32, dy: f32, dz: f32,
+        ox: f32,
+        oy: f32,
+        oz: f32,
+        dx: f32,
+        dy: f32,
+        dz: f32,
         angular_tolerance: f32,
     ) -> JsValue {
         let (trie, stars, kdtree) = match (&self.trie, &self.stars, &self.kdtree) {
@@ -208,11 +213,25 @@ impl Module {
             t += 0.050; // take a 50ly step
         }
 
-        log(&format!("{best_t} Best star index: {:?}, angular separation²: {}", best_idx, best_ang_sq));
+        log(&format!(
+            "{best_t} Best star index: {:?}, angular separation²: {}",
+            best_idx, best_ang_sq
+        ));
         match best_idx {
             Some(idx) => {
                 let coords = stars[idx as usize];
-                let name = trie.reconstruct_key(idx as u64);
+                let name = trie.get_label_from_coord_index(idx as usize).unwrap_or_else(|| "Unknown".to_string());
+
+                let idx2 = trie.find(&name);
+                log(&format!(
+                    "pick idx={}, name='{}', trie.find(name)={:?}, coords=({}, {}, {})",
+                    idx,
+                    name,
+                    idx2,
+                    coords.at(0),
+                    coords.at(1),
+                    coords.at(2)
+                ));
                 serde_wasm_bindgen::to_value(&RouteNode {
                     coords: CoordsSerde::from(coords),
                     name,
@@ -272,17 +291,23 @@ impl Module {
         };
 
         let result_coords = plotter::plot(start, end, stars, &ship, kdtree, report_callback);
-        Ok(
-            result_coords.iter().map(|c| {
+        Ok(result_coords
+            .iter()
+            .map(|c| {
                 let coords = stars[*c as usize];
-                let key = self.trie.as_ref().expect("Trie loaded").reconstruct_key(*c as u64);
+                let key = self
+                    .trie
+                    .as_ref()
+                    .expect("Trie loaded")
+                    .get_label_from_coord_index(*c as usize);
 
                 serde_wasm_bindgen::to_value(&RouteNode {
                     coords: CoordsSerde::from(coords),
-                    name: key,
-                 }).expect("Failed to serialize route node")
-            }).collect()
-        )
+                    name: key.unwrap_or("Unknown".to_string()),
+                })
+                .expect("Failed to serialize route node")
+            })
+            .collect())
     }
 }
 
@@ -299,7 +324,6 @@ extern "C" {
 pub fn init() {
     utils::set_panic_hook();
 }
-
 
 #[derive(serde::Deserialize, serde::Serialize)]
 struct RouteNode {
@@ -326,5 +350,74 @@ impl From<Coords> for CoordsSerde {
 impl From<CoordsSerde> for Coords {
     fn from(c: CoordsSerde) -> Self {
         Coords([c.x, c.y, c.z])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, io::Read};
+
+    use super::*;
+
+    #[allow(dead_code)]
+    fn build_trie_kdtree<'a>() -> (Vec<u8>, Vec<Coords>, kdtree::CompactKdTree) {
+        let stars = [
+            "Alpha Centauri",
+            "Barnard's Star",
+            "Lalande 21185",
+            "Sol",
+            "Wolf 359",
+        ];
+        let star_coords = [
+            Coords::new(4.37, 0.0, 0.0).0, // Alpha Centauri
+            Coords::new(5.96, 0.0, 0.0).0, // Barnard's Star
+            Coords::new(8.31, 0.0, 0.0).0, // Lalande 21185
+            Coords::new(0.0, 0.0, 0.0).0,  // Sol
+            Coords::new(7.78, 0.0, 0.0).0, // Wolf 359
+        ];
+        let mut buf = Vec::new();
+        let coords_indices = LoudsTrie::build(&stars, &mut buf).unwrap();
+
+        let mut sorted_coords = vec![[0.0; 3]; star_coords.len()];
+        for (sorted_idx, &trie_idx) in coords_indices.iter().enumerate() {
+            sorted_coords[trie_idx] = star_coords[sorted_idx];
+        }
+        let kdtree_indices = kdtree::KdTreeBuilder::from_points(&sorted_coords).build();
+        let kdtree = kdtree::CompactKdTree::new(kdtree_indices.into_boxed_slice());
+        let star_coords = sorted_coords.into_iter().map(Coords).collect();
+        (buf, star_coords, kdtree)
+    }
+
+    #[test]
+    fn test_coords_for_star() {
+        let mut buf = Vec::new();
+        let mut trie_file = File::open("../public/data/search_trie.bin").unwrap();
+        trie_file.read_to_end(&mut buf).unwrap();
+        let mut star_file = File::open("../public/data/neutron_stars0.bin").unwrap();
+        let mut kdtree_file = File::open("../public/data/star_kdtree.bin").unwrap();
+        let trie = LoudsTrie::from_bytes(&buf);
+        let mut kdtree_buf = Vec::new();
+        kdtree_file.read_to_end(&mut kdtree_buf).unwrap();
+        let kdtree = kdtree::CompactKdTree::from_bytes(&kdtree_buf);
+        let mut star_buf = Vec::new();
+        star_file.read_to_end(&mut star_buf).unwrap();
+        let star_coords: Vec<Coords> = star_buf
+            .chunks_exact(12)
+            .map(|chunk| {
+                let x = f32::from_le_bytes(chunk[0..4].try_into().unwrap());
+                let y = f32::from_le_bytes(chunk[4..8].try_into().unwrap());
+                let z = f32::from_le_bytes(chunk[8..12].try_into().unwrap());
+                Coords([x, y, z])
+            })
+            .collect();
+
+        let (index, distance) = kdtree
+            .nearest(Coords::new(0., 0., 0.), &star_coords)
+            .unwrap();
+        // assert_eq!(index, 3);
+        assert!(distance < 1e-6);
+        dbg!(trie.find("Sol"));
+        let name = trie.get_label_from_coord_index(index as usize);
+        assert_eq!(name.unwrap(), "Sol");
     }
 }

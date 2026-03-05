@@ -20,7 +20,7 @@ pub struct LoudsTrie<'a> {
     bits: BitSlice<'a>,
     bits_select: succinct::select::BinSearchSelect<JacobsonRank<BitSlice<'a>>>,
     terminals: BitSlice<'a>,
-    terminals_rank: JacobsonRank<BitSlice<'a>>,
+    terminals_select: BinSearchSelect<JacobsonRank<BitSlice<'a>>>,
 
     // Hybrid Palette Fields
     complex_labels_8: &'a [u8],   // Indices 0..255
@@ -318,9 +318,15 @@ impl<'a> LoudsTrie<'a> {
         &self.label_store[offset..offset + len]
     }
 
+    pub fn get_key_from_index(&self, coord_index: usize) -> Option<String> {
+        let terminal_pos = self.terminals_select.select1(coord_index as u64)?;
+        let bits_idx = self.bits_select.select1(terminal_pos)?;
+        Some(self.reconstruct_key(bits_idx))
+    }
+
     /// 3. BOTTOM-UP TRAVERSAL
     /// Given a Node ID (bit index), reconstruct the full string.
-    pub fn reconstruct_key(&self, mut node_index: u64) -> String {
+    fn reconstruct_key(&self, mut node_index: u64) -> String {
         let mut result = Vec::new();
 
         // Walk up until we hit the root (index 0)
@@ -374,7 +380,7 @@ impl<'a> LoudsTrie<'a> {
         // If so, return its terminal rank1 (uniquely identifies the key)
         self.is_terminal(curr_node_idx).then(|| {
             let node_id = self.bits_select.rank1(curr_node_idx);
-            self.terminals_rank.rank1(node_id - 1) - 1 // -1 to make it 0-based
+            self.terminals_select.rank1(node_id - 1) - 1 // -1 to make it 0-based
         })
     }
 
@@ -827,7 +833,7 @@ impl<'a> LoudsTrie<'a> {
 
         Self {
             bits_select: BinSearchSelect::new(JacobsonRank::new(bits_for_rank)),
-            terminals_rank: JacobsonRank::new(terminals_for_rank),
+            terminals_select: BinSearchSelect::new(JacobsonRank::new(terminals_for_rank)),
             complex_is_16_rank: JacobsonRank::new(complex_is_16_for_rank),
             complex_is_8_rank: JacobsonRank::new(complex_is_8_for_rank),
             bits,
