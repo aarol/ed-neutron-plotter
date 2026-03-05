@@ -213,25 +213,13 @@ impl Module {
             t += 0.050; // take a 50ly step
         }
 
-        log(&format!(
-            "{best_t} Best star index: {:?}, angular separation²: {}",
-            best_idx, best_ang_sq
-        ));
         match best_idx {
             Some(idx) => {
                 let coords = stars[idx as usize];
-                let name = trie.get_label_from_coord_index(idx as usize).unwrap_or_else(|| "Unknown".to_string());
+                let name = trie.get_key_from_index(idx as usize).unwrap_or_else(|| "Unknown".to_string());
 
                 let idx2 = trie.find(&name);
-                log(&format!(
-                    "pick idx={}, name='{}', trie.find(name)={:?}, coords=({}, {}, {})",
-                    idx,
-                    name,
-                    idx2,
-                    coords.at(0),
-                    coords.at(1),
-                    coords.at(2)
-                ));
+                
                 serde_wasm_bindgen::to_value(&RouteNode {
                     coords: CoordsSerde::from(coords),
                     name,
@@ -299,7 +287,7 @@ impl Module {
                     .trie
                     .as_ref()
                     .expect("Trie loaded")
-                    .get_label_from_coord_index(*c as usize);
+                    .get_key_from_index(*c as usize);
 
                 serde_wasm_bindgen::to_value(&RouteNode {
                     coords: CoordsSerde::from(coords),
@@ -417,7 +405,7 @@ mod tests {
         // assert_eq!(index, 3);
         assert!(distance < 1e-6);
         dbg!(trie.find("Sol"));
-        let name = trie.get_label_from_coord_index(index as usize);
+        let name = trie.get_key_from_index(index as usize);
         assert_eq!(name.unwrap(), "Sol");
     }
 }
