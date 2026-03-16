@@ -1,8 +1,9 @@
 import wasm from "vite-plugin-wasm";
+import preact from "@preact/preset-vite";
 
 /** @type {import('vite').UserConfig} */
 export default {
-  plugins: [wasm()],
+  plugins: [wasm(), preact()],
   server: {
     allowedHosts: true,
     headers: {

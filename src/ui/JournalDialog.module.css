@@ -1,6 +1,5 @@
-/* Journal Dialog Styles */
 .dialog {
-    composes: dialogSurface from '../ui.module.css';
+    composes: dialogSurface from './shared.module.css';
     padding: 0;
     width: 360px;
 }
@@ -11,18 +10,18 @@
 }
 
 .header {
-    composes: panelHeader from '../ui.module.css';
+    composes: panelHeader from './shared.module.css';
     padding: 16px 18px 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .title {
-    composes: panelTitle from '../ui.module.css';
+    composes: panelTitle from './shared.module.css';
     letter-spacing: 0.02em;
 }
 
 .closeBtn {
-    composes: closeBtn from '../ui.module.css';
+    composes: closeBtn from './shared.module.css';
 }
 
 .body {
@@ -52,7 +51,7 @@
 }
 
 .selectBtn {
-    composes: primaryBtn from '../ui.module.css';
+    composes: primaryBtn from './shared.module.css';
     align-self: flex-start;
     border-radius: 7px;
     padding: 8px 16px;

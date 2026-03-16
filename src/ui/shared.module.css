@@ -1,7 +1,5 @@
 /* Shared UI primitives — composed into component modules via CSS Modules `composes` */
 
-/* ── Dialog / panel surface ─────────────────────────────── */
-
 .dialogSurface {
     background: linear-gradient(135deg, rgba(10, 10, 25, 0.95), rgba(20, 20, 45, 0.95));
     border: 1px solid rgba(255, 255, 255, 0.3);
@@ -13,8 +11,6 @@
     font-family: inherit;
 }
 
-/* ── Backdrop blur ──────────────────────────────────────── */
-
 .backdropBlur {
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
@@ -25,13 +21,9 @@
     -webkit-backdrop-filter: blur(20px);
 }
 
-/* ── Glass border ───────────────────────────────────────── */
-
 .glassBorder {
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
-
-/* ── Panel chrome ───────────────────────────────────────── */
 
 .panelHeader {
     display: flex;
@@ -44,8 +36,6 @@
     font-size: 14px;
     font-weight: 600;
 }
-
-/* ── Close button ───────────────────────────────────────── */
 
 .closeBtn {
     background: none;
@@ -68,8 +58,6 @@
     background: rgba(255, 255, 255, 0.1);
     color: white;
 }
-
-/* ── Buttons ────────────────────────────────────────────── */
 
 .primaryBtn {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);

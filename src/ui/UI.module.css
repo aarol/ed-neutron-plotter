@@ -1,0 +1,103 @@
+.searchWrapper {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.gpsIcon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.3s ease, background 0.2s ease;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    color: white;
+    padding: 0;
+}
+
+.gpsIcon:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.gpsIcon svg {
+    width: 20px;
+    height: 20px;
+}
+
+.targetInfo {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    padding: 6px 12px 6px 16px;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 16px;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.targetName {
+    font-weight: 600;
+    margin-right: 10px;
+}
+
+.targetCoords {
+    color: rgba(255, 255, 255, 0.55);
+    font-variant-numeric: tabular-nums;
+}
+
+.targetRouteBtn {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.2s ease, background 0.2s ease;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    color: white;
+    margin-left: 2px;
+}
+
+.targetRouteBtn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.targetRouteBtn svg {
+    width: 20px;
+    height: 20px;
+}

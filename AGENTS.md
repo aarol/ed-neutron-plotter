@@ -5,6 +5,7 @@
 **ed-galaxy** is an Elite Dangerous neutron star route plotter and galaxy visualizer. It renders 4.4 million stars in the browser at 60/144 FPS using Three.js + WebGPU, provides instant autocomplete search over all star names, and computes jump routes between stars using neutron star boosts.
 
 The codebase has two parts:
+
 1. **TypeScript web frontend** (`src/`) — rendering, UI, and orchestration
 2. **Rust/WebAssembly module** (`rust-module/`) — autocomplete trie, KD-tree spatial index, and A* route plotter
 
@@ -14,14 +15,22 @@ The codebase has two parts:
 
 ```
 src/                    TypeScript frontend (Vite + Three.js)
-  main.ts               Entry point; initializes all subsystems
+  main.tsx              Entry point; initializes WASM, Galaxy, worker, ray-pick, and mounts UI
   galaxy.ts             Three.js WebGPU scene (stars, route line, camera)
-  search.ts             Search box component with autocomplete dropdown
-  route-dialog.ts       Modal dialog for configuring a route (from/to/supercharged)
   api.ts                Star coordinate resolution (local WASM or remote EDSM API fallback)
   web-worker.ts         Comlink web worker wrapper — runs WASM pathfinding off-main-thread
   line-points.ts        Three.js helper for rendering the route line
-  journal/journal.ts    (WIP) File System Access API for reading ED journal files
+  journal/journal.ts    File System Access API for reading ED journal files
+  ui/                   Preact UI components and styles
+    UI.tsx              Top-level UI orchestration (search, dialogs, target bar)
+    SearchBox.tsx       Autocomplete search input component
+    SearchBar.tsx       Top search row (search input + GPS button)
+    TargetInfo.tsx      Bottom target info bar + route trigger
+    RouteDialog.tsx     Route configuration dialog (from/to/supercharged)
+    JournalDialog.tsx   Journal setup dialog UI
+    *.module.css        Component-scoped styles
+    shared.module.css   Shared style primitives composed by UI modules
+    types.ts            Shared UI types (RouteConfig, target info)
 
 rust-module/            Rust crate compiled to WASM with wasm-pack
   src/lib.rs            WASM bindings exposed to JS (Module struct)
@@ -74,6 +83,7 @@ wasm-pack build --target web
 ```
 
 Step 1 requires the raw spansh data dumps to be present in `rust-module/`:
+
 - `systems_neutron.json` — from <https://spansh.co.uk/dumps>
 - `systems_1day.json` (or similar) — from the same source
 
@@ -86,17 +96,24 @@ Step 2 must be re-run whenever Rust sources change.
 ```
 spansh dumps (JSON)
   └─ cargo run --release (gen_star_data.rs)
-       ├─ neutron_stars*.bin  →  loaded by main.ts → galaxy.loadStars()
+       ├─ neutron_stars*.bin  →  loaded by main.tsx → galaxy.loadStars()
        ├─ search_trie.bin     →  Module.set_trie()  → suggest_words()
        └─ star_kdtree.bin     →  Module.set_kdtree() / WasmWorker.setKDTree()
 
 User types in search box
-  └─ Module.suggest_words(prefix)  →  trie lookup (main thread, sync)
+  └─ UI/SearchBox.onSuggest()  →  Module.suggest_words(prefix, n) (main thread, sync)
 
 User submits route
-  └─ api.getStarCoords()  →  Module.get_coords_for_star() or EDSM API
+  └─ UI/RouteDialog.onSubmit()  →  main.tsx handleGenerateRoute()
+  └─ api.getStarCoords()        →  Module.get_coords_for_star() or EDSM API
   └─ WasmWorker.findRoute(start, end, callback)  →  plotter::plot() (worker thread)
        └─ routeReportCallback()  →  galaxy.setRoutePoints()  →  Three.js line update
+
+Journal initialization
+  └─ UI/JournalDialog.onInitialize()  →  main.tsx journal.init()
+
+Star pick in 3D scene
+  └─ main.tsx raycaster + Module.find_star_near_ray()  →  UI target info update
 ```
 
 ---
@@ -118,7 +135,8 @@ Exposed on `Module` (from `rust-module/pkg`):
 
 ## File Conventions
 
-- **CSS Modules** — Component-scoped styles use `*.module.css` (e.g. `search.module.css`, `route-dialog.module.css`).
+- **UI location** — UI components live under `src/ui/` and are implemented as `*.tsx` Preact components.
+- **CSS Modules** — Component-scoped styles use `*.module.css` (e.g. `ui/SearchBox.module.css`, `ui/RouteDialog.module.css`).
 - **TypeScript strict mode** is enabled (`tsconfig.json`).
 - **No test framework** is currently set up for the frontend. Rust unit tests live in the same source files (`#[cfg(test)]` blocks).
 - The `vite.config.js` uses `vite-plugin-wasm` and `vite-plugin-top-level-await` to support WASM imports.

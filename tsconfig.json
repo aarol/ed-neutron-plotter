@@ -7,6 +7,9 @@
     "types": ["vite/client"],
     "skipLibCheck": true,
 
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
