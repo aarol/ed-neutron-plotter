@@ -10,8 +10,10 @@
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.4",
+    "@tailwindcss/vite": "^4.2.1",
     "@types/node": "^24.10.1",
     "@types/three": "^0.181.0",
+    "tailwindcss": "^4.2.1",
     "typescript": "~5.9.3",
     "vite": "^7.2.4",
     "vite-plugin-top-level-await": "^1.6.0",

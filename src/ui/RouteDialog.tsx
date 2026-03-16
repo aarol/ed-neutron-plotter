@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { SearchBox, type SearchBoxHandle } from "./SearchBox";
 import type { RouteConfig } from "./types";
-import styles from "./RouteDialog.module.css";
+import { uiTheme } from "./theme";
 
 interface RouteDialogProps {
   isOpen: boolean;
@@ -82,20 +82,20 @@ export function RouteDialog({
   };
 
   return (
-    <div className={styles.panel}>
-      <div className={styles.header}>
-        <h2 className={styles.title}>Configure Route</h2>
-        <button className={styles.closeBtn} onClick={onClose} type="button">
+    <div className={`${uiTheme.glassPanel} fixed left-5 top-20 z-[999] w-[280px] p-4`}>
+      <div className={`${uiTheme.panelHeader} mb-3`}>
+        <h2 className={uiTheme.panelTitle}>Configure Route</h2>
+        <button className={uiTheme.iconButton} onClick={onClose} type="button">
           ×
         </button>
       </div>
 
-      <div className={styles.formSection}>
-        <label className={styles.label}>From:</label>
+      <div className="relative mb-2.5">
+        <label className="mb-1 block text-[11px] font-medium text-white/70">From:</label>
         <SearchBox
           autoFocus
-          className={styles.dialogSearchBox}
-          inputClassName={styles.dialogSearchInput}
+          className="w-full"
+          inputClassName={uiTheme.compactInput}
           onSuggest={onSuggest}
           onValueChange={setFrom}
           placeholder="Enter starting star..."
@@ -105,11 +105,11 @@ export function RouteDialog({
         />
       </div>
 
-      <div className={styles.formSection}>
-        <label className={styles.label}>To:</label>
+      <div className="relative mb-2.5">
+        <label className="mb-1 block text-[11px] font-medium text-white/70">To:</label>
         <SearchBox
-          className={styles.dialogSearchBox}
-          inputClassName={styles.dialogSearchInput}
+          className="w-full"
+          inputClassName={uiTheme.compactInput}
           onSuggest={onSuggest}
           onValueChange={setTo}
           placeholder="Enter destination star..."
@@ -118,11 +118,11 @@ export function RouteDialog({
         />
       </div>
 
-      <div className={styles.checkboxSection}>
-        <label className={styles.checkboxLabel}>
+      <div className="mb-3">
+        <label className="flex cursor-pointer items-center text-xs text-white/90">
           <input
             checked={alreadySupercharged}
-            className={styles.checkbox}
+            className="mr-2 h-3.5 w-3.5 cursor-pointer border border-white/35 bg-black/40 accent-space-accent-strong"
             onInput={(event) => setAlreadySupercharged((event.currentTarget as HTMLInputElement).checked)}
             type="checkbox"
           />
@@ -130,11 +130,11 @@ export function RouteDialog({
         </label>
       </div>
 
-      <div className={styles.buttonGroup}>
-        <button className={styles.cancelBtn} onClick={onClose} type="button">
+      <div className="flex justify-end gap-2">
+        <button className={uiTheme.ghostButton} onClick={onClose} type="button">
           Cancel
         </button>
-        <button className={styles.generateBtn} disabled={isSubmitting} onClick={() => void handleGenerate()} type="button">
+        <button className={uiTheme.primaryButton} disabled={isSubmitting} onClick={() => void handleGenerate()} type="button">
           Generate Route
         </button>
       </div>

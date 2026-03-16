@@ -1,63 +1,39 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@import "tailwindcss";
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@theme {
+  --font-sans: "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --color-space-ink: #05070d;
+  --color-space-panel: #0b1020;
+  --color-space-panel-alt: #1a2338;
+  --color-space-text: #e8edf6;
+  --color-space-muted: #9fb0ca;
+  --color-space-accent: #6aa6ff;
+  --color-space-accent-strong: #2f7ff3;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
+@layer base {
   :root {
-    color: #213547;
-    background-color: #ffffff;
+    color: var(--color-space-text);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  a:hover {
-    color: #747bff;
+
+  * {
+    border-radius: 0 !important;
   }
-  button {
-    background-color: #f9f9f9;
+
+  body {
+    @apply m-0 min-h-screen min-w-[320px] overflow-hidden bg-space-ink text-space-text;
+  }
+
+  dialog {
+    @apply border-0 bg-transparent p-0 text-space-text;
+  }
+
+  dialog::backdrop {
+    background: rgba(2, 4, 9, 0.65);
+    backdrop-filter: blur(3px);
   }
 }

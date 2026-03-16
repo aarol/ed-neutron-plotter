@@ -1,7 +1,7 @@
 import * as directionSvg from "../directions.svg";
 import { forwardRef } from "preact/compat";
 import { useEffect, useImperativeHandle, useRef, useState } from "preact/hooks";
-import styles from "./SearchBox.module.css";
+import { uiTheme } from "./theme";
 
 export interface SearchBoxProps {
   onSearch?: (query: string) => void;
@@ -122,10 +122,10 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
   }, [selectedIndex]);
 
   return (
-    <div className={`${styles.container} ${className || ""}`.trim()} ref={containerRef}>
-      <div className={styles.inputWrapper}>
+    <div className={`flex items-center gap-2 ${className || ""}`.trim()} ref={containerRef}>
+      <div className="relative">
         <input
-          className={`${styles.input} ${inputClassName || ""}`.trim()}
+          className={`${uiTheme.textInput} w-[300px] ${inputClassName || ""}`.trim()}
           onInput={(event) => {
             const query = (event.currentTarget as HTMLInputElement).value;
             setCurrentValue(query);
@@ -170,7 +170,7 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
 
         <button
           aria-label="Find route to target"
-          className={`${styles.routeIcon} ${!isRouteVisible ? styles.routeIconHidden : ""}`.trim()}
+          className={`absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center border border-transparent bg-transparent p-0 opacity-70 transition hover:opacity-100 ${!isRouteVisible ? "hidden" : ""}`.trim()}
           onClick={() => {
             if (value.trim() && onClickRoute) {
               onClickRoute(value);
@@ -179,13 +179,13 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
           title="Find route to target"
           type="button"
         >
-          <img alt="" aria-hidden="true" src={directionSvg.default} />
+          <img alt="" aria-hidden="true" className="h-5 w-5 invert" src={directionSvg.default} />
         </button>
 
-        <div className={`${styles.suggestions} ${suggestions.length > 0 ? styles.suggestionsVisible : ""}`.trim()}>
+        <div className={`${uiTheme.suggestionsPanel} ${suggestions.length > 0 ? "block" : "hidden"}`.trim()}>
           {suggestions.map((suggestion, index) => (
             <div
-              className={`${styles.suggestionItem} ${index === selectedIndex ? styles.selected : ""}`.trim()}
+              className={`${uiTheme.suggestionRow} ${index === selectedIndex ? "bg-white/20" : ""}`.trim()}
               key={`${suggestion}-${index}`}
               onClick={() => selectSuggestion(suggestion)}
               onMouseEnter={() => setSelectedIndex(index)}
