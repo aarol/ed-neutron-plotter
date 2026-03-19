@@ -1,12 +1,18 @@
 import * as directionSvg from "../directions.svg";
 import { forwardRef } from "preact/compat";
+import type { ComponentChildren } from "preact";
 import { useEffect, useImperativeHandle, useRef, useState } from "preact/hooks";
 import { uiTheme } from "./theme";
 
+export interface SearchSubmitOptions {
+  openRoute: boolean;
+}
+
 export interface SearchBoxProps {
-  onSearch?: (query: string) => void;
+  onSearch?: (query: string, options: SearchSubmitOptions) => void;
   onSuggest: (word: string) => string[];
   onClickRoute?: (word: string) => void;
+  rightIcon?: ComponentChildren;
   onValueChange?: (value: string) => void;
   placeholder: string;
   className?: string;
@@ -33,6 +39,7 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
     onClickRoute,
     onSearch,
     onSuggest,
+    rightIcon,
     onValueChange,
     placeholder,
     showRouteButton = Boolean(onClickRoute),
@@ -48,6 +55,8 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const value = controlledValue ?? internalValue;
   const isRouteVisible = showRouteButton && value.trim().length > 0;
+  const hasRightIcon = rightIcon !== undefined && rightIcon !== null;
+  const hasRightControls = hasRightIcon || isRouteVisible;
 
   const hideSuggestions = () => {
     setSuggestions([]);
@@ -73,14 +82,14 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
     updateSuggestions(nextValue);
   };
 
-  const submitSearch = (query: string) => {
-    onSearch?.(query);
+  const submitSearch = (query: string, options: SearchSubmitOptions = { openRoute: false }) => {
+    onSearch?.(query, options);
     hideSuggestions();
   };
 
-  const selectSuggestion = (suggestion: string) => {
+  const selectSuggestion = (suggestion: string, options: SearchSubmitOptions = { openRoute: false }) => {
     setCurrentValue(suggestion);
-    submitSearch(suggestion);
+    submitSearch(suggestion, options);
   };
 
   useImperativeHandle(
@@ -125,7 +134,7 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
     <div className={`flex items-center gap-2 ${className || ""}`.trim()} ref={containerRef}>
       <div className="relative">
         <input
-          className={`${uiTheme.textInput} w-[300px] ${inputClassName || ""}`.trim()}
+          className={`${uiTheme.textInput} w-100 min-w-20 ${hasRightIcon ? "pr-14" : hasRightControls ? "pr-20" : ""} ${inputClassName || ""}`.trim()}
           onInput={(event) => {
             const query = (event.currentTarget as HTMLInputElement).value;
             setCurrentValue(query);
@@ -149,12 +158,14 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
 
             if (event.key === "Enter") {
               event.preventDefault();
+              const options = { openRoute: event.shiftKey };
+
               if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
-                selectSuggestion(suggestions[selectedIndex]);
+                selectSuggestion(suggestions[selectedIndex], options);
                 return;
               }
 
-              submitSearch(value);
+              submitSearch(value, options);
               return;
             }
 
@@ -168,26 +179,36 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
           value={value}
         />
 
-        <button
-          aria-label="Find route to target"
-          className={`absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center border border-transparent bg-transparent p-0 opacity-70 transition hover:opacity-100 ${!isRouteVisible ? "hidden" : ""}`.trim()}
-          onClick={() => {
-            if (value.trim() && onClickRoute) {
-              onClickRoute(value);
-            }
-          }}
-          title="Find route to target"
-          type="button"
-        >
-          <img alt="" aria-hidden="true" className="h-5 w-5 invert" src={directionSvg.default} />
-        </button>
+        <div className={`absolute inset-y-0 right-0 flex items-center ${!hasRightControls ? "hidden" : ""}`.trim()}>
+          {hasRightIcon ? (
+            <div className="flex h-full w-12 items-center justify-center border-l border-white/30">
+              {rightIcon}
+            </div>
+          ) : null}
+
+          {!hasRightIcon && isRouteVisible ? (
+            <button
+              aria-label="Find route to target"
+              className="mr-2 flex h-6 w-6 items-center justify-center border border-transparent bg-transparent p-0 opacity-70 transition hover:opacity-100"
+              onClick={() => {
+                if (value.trim() && onClickRoute) {
+                  onClickRoute(value);
+                }
+              }}
+              title="Find route to target"
+              type="button"
+            >
+              <img alt="" aria-hidden="true" className="h-5 w-5 invert" src={directionSvg.default} />
+            </button>
+          ) : null}
+        </div>
 
         <div className={`${uiTheme.suggestionsPanel} ${suggestions.length > 0 ? "block" : "hidden"}`.trim()}>
           {suggestions.map((suggestion, index) => (
             <div
               className={`${uiTheme.suggestionRow} ${index === selectedIndex ? "bg-white/20" : ""}`.trim()}
               key={`${suggestion}-${index}`}
-              onClick={() => selectSuggestion(suggestion)}
+              onClick={() => selectSuggestion(suggestion, { openRoute: false })}
               onMouseEnter={() => setSelectedIndex(index)}
               ref={(element) => {
                 suggestionRefs.current[index] = element;

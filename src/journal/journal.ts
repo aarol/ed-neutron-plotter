@@ -4,6 +4,8 @@ type LocationCallback = (starName: string, coords: { x: number, y: number, z: nu
 export class Journal {
   private directoryHandle: FileSystemDirectoryHandle | null = null;
   private lastLocation: string | null = null;
+  private observer: FileSystemObserver | null = null;
+  private isTracking = false;
 
   onNewLocation: LocationCallback;
 
@@ -15,7 +17,7 @@ export class Journal {
     if ('showDirectoryPicker' in window) {
       const handle = await window.showDirectoryPicker({ mode: "read" });
       this.directoryHandle = handle;
-      this.initObserver(handle);
+      await this.initObserver(handle);
       const latestFile = await this.findLatestJournalFile();
       if (latestFile) {
         const events = await this.parseJournalFile(latestFile);
@@ -28,8 +30,10 @@ export class Journal {
     return;
   }
 
-  initObserver(handle: FileSystemDirectoryHandle): void {
-    new FileSystemObserver((record, _observer) => {
+  async initObserver(handle: FileSystemDirectoryHandle): Promise<void> {
+    this.stopTracking();
+
+    const observer = new FileSystemObserver((record, _observer) => {
       record.forEach(async change => {
         if (change.changedHandle.kind === "file" && change.changedHandle.name.startsWith("Journal.")) {
           const events = await this.parseJournalFile(await change.changedHandle.getFile());
@@ -37,7 +41,34 @@ export class Journal {
           if (lastJump) this.update(lastJump);
         }
       })
-    }).observe(handle)
+    });
+
+    await observer.observe(handle);
+    this.observer = observer;
+    this.isTracking = true;
+  }
+
+  stopTracking(): void {
+    if (!this.observer) {
+      this.isTracking = false;
+      return;
+    }
+
+    if (this.directoryHandle) {
+      try {
+        this.observer.unobserve(this.directoryHandle);
+      } catch {
+        // Ignore cleanup errors if observer was already detached.
+      }
+    }
+
+    this.observer.disconnect();
+    this.observer = null;
+    this.isTracking = false;
+  }
+
+  get tracking(): boolean {
+    return this.isTracking;
   }
 
   async findLatestJournalFile(): Promise<File | null> {

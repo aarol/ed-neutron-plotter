@@ -62,6 +62,8 @@ export function RouteDialog({
     return null;
   }
 
+  const canGenerate = from.trim().length > 0 && to.trim().length > 0;
+
   const handleGenerate = async () => {
     const config: RouteConfig = {
       from: from.trim(),
@@ -82,7 +84,7 @@ export function RouteDialog({
   };
 
   return (
-    <div className={`${uiTheme.glassPanel} fixed left-5 top-20 z-[999] w-[280px] p-4`}>
+    <div className={`${uiTheme.glassPanel} fixed left-5 top-20 z-999 w-280px p-4`}>
       <div className={`${uiTheme.panelHeader} mb-3`}>
         <h2 className={uiTheme.panelTitle}>Configure Route</h2>
         <button className={uiTheme.iconButton} onClick={onClose} type="button">
@@ -134,7 +136,16 @@ export function RouteDialog({
         <button className={uiTheme.ghostButton} onClick={onClose} type="button">
           Cancel
         </button>
-        <button className={uiTheme.primaryButton} disabled={isSubmitting} onClick={() => void handleGenerate()} type="button">
+        <button
+          className={
+            canGenerate
+              ? uiTheme.primaryButton
+              : "border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/45 shadow-none transition"
+          }
+          disabled={isSubmitting || !canGenerate}
+          onClick={() => void handleGenerate()}
+          type="button"
+        >
           Generate Route
         </button>
       </div>

@@ -3,12 +3,14 @@ import { useImperativeHandle, useState } from "preact/hooks";
 import { JournalDialog } from "./JournalDialog";
 import { RouteDialog } from "./RouteDialog";
 import { SearchBar } from "./SearchBar";
+import type { SearchSubmitOptions } from "./SearchBox";
 import { TargetInfo } from "./TargetInfo";
 import type { RouteConfig, TargetInfoState } from "./types";
 
 export interface UIProps {
   onGenerateRoute: (config: RouteConfig) => Promise<void>;
   onInitializeJournal: () => Promise<void>;
+  onStopJournalTracking: () => void;
   onSelectTarget: (query: string) => Promise<TargetInfoState | null>;
   onSuggest: (word: string) => string[];
 }
@@ -19,11 +21,12 @@ export interface UIHandle {
 }
 
 export const UI = forwardRef<UIHandle, UIProps>(function UI(
-  { onGenerateRoute, onInitializeJournal, onSelectTarget, onSuggest },
+  { onGenerateRoute, onInitializeJournal, onSelectTarget, onStopJournalTracking, onSuggest },
   ref,
 ) {
   const [target, setTarget] = useState<TargetInfoState>({ name: "Sol", x: 0, y: 0, z: 0 });
   const [isJournalOpen, setIsJournalOpen] = useState(false);
+  const [isJournalTracking, setIsJournalTracking] = useState(false);
   const [routeDialogState, setRouteDialogState] = useState({
     isOpen: false,
     fromValue: "",
@@ -50,7 +53,7 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
     [],
   );
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = async (query: string, options: SearchSubmitOptions) => {
     const nextTarget = await onSelectTarget(query);
     if (!nextTarget) {
       window.alert(`Star not found: ${query}`);
@@ -58,7 +61,9 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
     }
 
     setTarget(nextTarget);
-    openRouteDialog(query);
+    if (options.openRoute) {
+      openRouteDialog(query);
+    }
   };
 
   const handleGenerateRoute = async (config: RouteConfig) => {
@@ -75,9 +80,19 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
     <>
       <SearchBar
         onClickRoute={openRouteDialog}
-        onOpenJournal={() => setIsJournalOpen(true)}
-        onSearch={(query) => {
-          void handleSearch(query);
+        isJournalTracking={isJournalTracking}
+        onOpenJournal={() => {
+          if (isJournalTracking) {
+            onStopJournalTracking();
+            setIsJournalTracking(false);
+            setIsJournalOpen(false);
+            return;
+          }
+
+          setIsJournalOpen(true);
+        }}
+        onSearch={(query, options) => {
+          void handleSearch(query, options);
         }}
         onSuggest={onSuggest}
       />
@@ -97,7 +112,10 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
       <JournalDialog
         isOpen={isJournalOpen}
         onClose={() => setIsJournalOpen(false)}
-        onInitialize={onInitializeJournal}
+        onInitialize={async () => {
+          await onInitializeJournal();
+          setIsJournalTracking(true);
+        }}
       />
     </>
   );

@@ -94,6 +94,7 @@ async function main() {
     <UI
       onGenerateRoute={handleGenerateRoute}
       onInitializeJournal={() => journal.init()}
+      onStopJournalTracking={() => journal.stopTracking()}
       onSelectTarget={handleSelectTarget}
       onSuggest={onSuggest}
       ref={uiRef}
