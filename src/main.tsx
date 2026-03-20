@@ -173,6 +173,7 @@ async function main() {
     .then((res) => res.arrayBuffer())
     .then((trieBuffer) => {
       primaryModule.set_trie(new Uint8Array(trieBuffer));
+      wasmWorker.setTrie(new Uint8Array(trieBuffer));
       console.log("Search trie loaded.");
     });
 

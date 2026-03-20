@@ -324,7 +324,6 @@ impl<'a> LoudsTrie<'a> {
         Some(self.reconstruct_key(bits_idx))
     }
 
-    /// 3. BOTTOM-UP TRAVERSAL
     /// Given a Node ID (bit index), reconstruct the full string.
     fn reconstruct_key(&self, mut node_index: u64) -> String {
         let mut result = Vec::new();

@@ -23,6 +23,11 @@ export class WasmWorker {
     console.log("Wasm worker: Stars data set.");
   }
 
+  setTrie(trie: Uint8Array) {
+    this.wasmModule.set_trie(trie);
+    console.log("Wasm worker: Trie data set.");
+  }
+
   setKDTree(kdtree: Uint8Array) {
     this.wasmModule.set_kdtree(kdtree);
     console.log("Wasm worker: KDTree data set.");

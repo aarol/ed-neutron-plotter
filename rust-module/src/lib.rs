@@ -216,10 +216,12 @@ impl Module {
         match best_idx {
             Some(idx) => {
                 let coords = stars[idx as usize];
-                let name = trie.get_key_from_index(idx as usize).unwrap_or_else(|| "Unknown".to_string());
+                let name = trie
+                    .get_key_from_index(idx as usize)
+                    .unwrap_or_else(|| "Unknown".to_string());
 
                 let idx2 = trie.find(&name);
-                
+
                 serde_wasm_bindgen::to_value(&RouteNode {
                     coords: CoordsSerde::from(coords),
                     name,
@@ -243,6 +245,12 @@ impl Module {
             .map_err(|e| JsValue::from_str(&format!("Invalid end coords: {}", e)))?;
         let start: Coords = start.into();
         let end: Coords = end.into();
+
+        let trie = match self.trie {
+            Some(ref trie) => trie,
+            None => return Err(JsValue::from_str("Trie not initialized")),
+        };
+
         log(&format!("Finding route from ({}) to ({})", start, end));
 
         let ship = plotter::Ship {
@@ -283,12 +291,7 @@ impl Module {
             .iter()
             .map(|c| {
                 let coords = stars[*c as usize];
-                let key = self
-                    .trie
-                    .as_ref()
-                    .expect("Trie loaded")
-                    .get_key_from_index(*c as usize);
-
+                let key = trie.get_key_from_index(*c as usize);
                 serde_wasm_bindgen::to_value(&RouteNode {
                     coords: CoordsSerde::from(coords),
                     name: key.unwrap_or("Unknown".to_string()),

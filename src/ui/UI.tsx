@@ -97,7 +97,7 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
         onSuggest={onSuggest}
       />
 
-      <TargetInfo onOpenRoute={openRouteDialog} target={target} />
+      <TargetInfo isRoutePanelOpen={routeDialogState.isOpen} onOpenRoute={openRouteDialog} target={target} />
 
       <RouteDialog
         initialFromValue={routeDialogState.fromValue}
