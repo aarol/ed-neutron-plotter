@@ -1,14 +1,16 @@
 import { forwardRef } from "preact/compat";
 import { useImperativeHandle, useState } from "preact/hooks";
 import { JournalDialog } from "./JournalDialog";
+import { RouteListPanel } from "./RouteListPanel";
 import { RouteDialog } from "./RouteDialog";
 import { SearchBar } from "./SearchBar";
 import type { SearchSubmitOptions } from "./SearchBox";
 import { TargetInfo } from "./TargetInfo";
-import type { RouteConfig, TargetInfoState } from "./types";
+import type { RouteConfig, RouteNode, TargetInfoState } from "./types";
 
 export interface UIProps {
-  onGenerateRoute: (config: RouteConfig) => Promise<void>;
+  onGenerateRoute: (config: RouteConfig) => Promise<RouteNode[]>;
+  onRouteSelectionChange: (checkedByIndex: boolean[]) => void;
   onInitializeJournal: () => Promise<void>;
   onStopJournalTracking: () => void;
   onSelectTarget: (query: string) => Promise<TargetInfoState | null>;
@@ -21,12 +23,15 @@ export interface UIHandle {
 }
 
 export const UI = forwardRef<UIHandle, UIProps>(function UI(
-  { onGenerateRoute, onInitializeJournal, onSelectTarget, onStopJournalTracking, onSuggest },
+  { onGenerateRoute, onInitializeJournal, onRouteSelectionChange, onSelectTarget, onStopJournalTracking, onSuggest },
   ref,
 ) {
   const [target, setTarget] = useState<TargetInfoState>({ name: "Sol", x: 0, y: 0, z: 0 });
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [isJournalTracking, setIsJournalTracking] = useState(false);
+  const [isRouteListPanelVisible, setIsRouteListPanelVisible] = useState(false);
+  const [routeNodes, setRouteNodes] = useState<RouteNode[]>([]);
+  const [routeCheckedByIndex, setRouteCheckedByIndex] = useState<boolean[]>([]);
   const [routeDialogState, setRouteDialogState] = useState({
     isOpen: false,
     fromValue: "",
@@ -35,6 +40,7 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
   });
 
   const openRouteDialog = (word: string) => {
+    setIsRouteListPanelVisible(false);
     setRouteDialogState((currentState) => ({
       ...currentState,
       isOpen: true,
@@ -67,7 +73,16 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
   };
 
   const handleGenerateRoute = async (config: RouteConfig) => {
-    await onGenerateRoute(config);
+    const nextRouteNodes = await onGenerateRoute(config);
+
+    if (nextRouteNodes.length > 0) {
+      setRouteNodes(nextRouteNodes);
+      const nextCheckedByIndex = nextRouteNodes.map(() => false);
+      setRouteCheckedByIndex(nextCheckedByIndex);
+      onRouteSelectionChange(nextCheckedByIndex);
+      setIsRouteListPanelVisible(true);
+    }
+
     setRouteDialogState({
       isOpen: false,
       fromValue: config.from,
@@ -98,6 +113,16 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
       />
 
       <TargetInfo isRoutePanelOpen={routeDialogState.isOpen} onOpenRoute={openRouteDialog} target={target} />
+
+      <RouteListPanel
+        checkedByIndex={routeCheckedByIndex}
+        nodes={routeNodes}
+        onCheckedByIndexChange={(nextCheckedByIndex) => {
+          setRouteCheckedByIndex(nextCheckedByIndex);
+          onRouteSelectionChange(nextCheckedByIndex);
+        }}
+        visible={isRouteListPanelVisible}
+      />
 
       <RouteDialog
         initialFromValue={routeDialogState.fromValue}

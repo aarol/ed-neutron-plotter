@@ -9,7 +9,7 @@ import Worker from "./web-worker?worker";
 import { Journal } from "./journal/journal";
 import { createRef, render } from "preact";
 import { UI, type UIHandle } from "./ui/UI";
-import type { RouteConfig, TargetInfoState } from "./ui/types";
+import type { RouteConfig, RouteNode, TargetInfoState } from "./ui/types";
 
 async function main() {
   await init();
@@ -57,7 +57,7 @@ async function main() {
     return { name: query, x: pos.x, y: pos.y, z: pos.z };
   };
 
-  const handleGenerateRoute = async (routeConfig: RouteConfig) => {
+  const handleGenerateRoute = async (routeConfig: RouteConfig): Promise<RouteNode[]> => {
     console.log("Route configuration:", routeConfig);
 
     const start = await api.getStarCoords(primaryModule, routeConfig.from);
@@ -65,13 +65,16 @@ async function main() {
 
     if (!start || !end) {
       console.error("Could not get coordinates for stars", routeConfig.from, routeConfig.to);
-      return;
+      return [];
     }
 
     const res = await wasmWorker.findRoute(start, end, Comlink.proxy(routeReportCallback));
     if (res) {
       res.forEach((node) => console.log(`Route node: ${node.name} at (${node.coords.x}, ${node.coords.y}, ${node.coords.z})`));
+      return res as RouteNode[];
     }
+
+    return [];
   };
 
   const journal = new Journal({
@@ -94,6 +97,9 @@ async function main() {
     <UI
       onGenerateRoute={handleGenerateRoute}
       onInitializeJournal={() => journal.init()}
+      onRouteSelectionChange={(checkedByIndex) => {
+        galaxy.setRoutePointHighlights(checkedByIndex);
+      }}
       onStopJournalTracking={() => journal.stopTracking()}
       onSelectTarget={handleSelectTarget}
       onSuggest={onSuggest}

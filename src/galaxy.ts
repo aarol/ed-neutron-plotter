@@ -8,6 +8,9 @@ import { LinePoints } from './line-points';
 export class Galaxy {
   camera = new PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200)
   scene = new Scene();
+  // Draws the route lines on top of the stars
+  // because the stars are drawn with additive blending
+  overlayScene = new Scene();
   renderer = new WebGPURenderer({
     antialias: true,
     depth: false,
@@ -16,7 +19,7 @@ export class Galaxy {
   controls = new OrbitControls(this.camera, this.renderer.domElement)
   targetPosition = new Vector3(0, 0, 0)
   currentPosition = this.targetPosition.clone()
-  routeLine = new LinePoints(256, 0xffffff, 0.002);
+  routeLine = new LinePoints(256, 0xffffff, 0.003);
 
   focusSphere!: Mesh
 
@@ -28,6 +31,7 @@ export class Galaxy {
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setClearColor('#000000');
+    this.renderer.autoClear = false;
     document.body.appendChild(this.renderer.domElement);
 
     document.body.appendChild(this.stats.dom)
@@ -60,8 +64,8 @@ export class Galaxy {
     this.scene.background = texture;
 
     this.focusSphere = this.createFocusSphere()
-    this.scene.add(this.focusSphere)
-    this.scene.add(this.routeLine)
+    this.overlayScene.add(this.focusSphere)
+    this.overlayScene.add(this.routeLine)
   }
 
   createFocusSphere() {
@@ -86,6 +90,11 @@ export class Galaxy {
     this.requestRenderIfNotRequested()
   }
 
+  setRoutePointHighlights(checkedByIndex: boolean[]) {
+    this.routeLine.setCheckedMask(checkedByIndex);
+    this.requestRenderIfNotRequested();
+  }
+
   onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
@@ -100,7 +109,10 @@ export class Galaxy {
 
     this.controls.update()
     this.stats.update()
+    this.renderer.clear();
     this.renderer.render(this.scene, this.camera)
+    this.renderer.clearDepth();
+    this.renderer.render(this.overlayScene, this.camera)
 
     if (this.currentPosition.distanceToSquared(this.targetPosition) > 0.0001) {
       this.currentPosition.lerp(this.targetPosition, 0.08)
