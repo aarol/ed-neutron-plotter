@@ -85,9 +85,9 @@ export function RouteDialog({
   };
 
   return (
-    <div className={`${uiTheme.glassPanel} fixed left-5 top-20 z-999 w-280px p-4`}>
+    <div className={`${uiTheme.glassPanel} fixed left-1/2 top-1/2 z-999 w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 p-4`}>
       <div className={`${uiTheme.panelHeader} mb-3`}>
-        <h2 className={uiTheme.panelTitle}>Configure Route</h2>
+        <h2 className={uiTheme.panelTitle}>Plot route</h2>
         <Button onClick={onClose} variant="icon">
           ×
         </Button>

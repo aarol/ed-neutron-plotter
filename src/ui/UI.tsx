@@ -1,17 +1,20 @@
 import { forwardRef } from "preact/compat";
-import { useImperativeHandle, useState } from "preact/hooks";
+import { useEffect, useImperativeHandle, useState } from "preact/hooks";
 import { JournalDialog } from "./JournalDialog";
 import { RouteListPanel } from "./RouteListPanel";
 import { RouteDialog } from "./RouteDialog";
 import { SearchBar } from "./SearchBar";
 import type { SearchSubmitOptions } from "./SearchBox";
 import { TargetInfo } from "./TargetInfo";
+import { clearStoredRoutePlot, loadStoredRoutePlot, saveStoredRoutePlot } from "./routeStorage";
 import { useToast } from "./toast";
 import type { RouteConfig, RouteNode, TargetInfoState } from "./types";
 
 export interface UIProps {
   onGenerateRoute: (config: RouteConfig) => Promise<RouteNode[]>;
   onRouteSelectionChange: (index: number) => void;
+  onRestoreStoredRoute: (nodes: RouteNode[], progress: number) => void;
+  onClearRoute: () => void;
   onInitializeJournal: () => Promise<void>;
   onStopJournalTracking: () => void;
   onSelectTarget: (query: string) => Promise<TargetInfoState | null>;
@@ -24,7 +27,7 @@ export interface UIHandle {
 }
 
 export const UI = forwardRef<UIHandle, UIProps>(function UI(
-  { onGenerateRoute, onInitializeJournal, onRouteSelectionChange, onSelectTarget, onStopJournalTracking, onSuggest },
+  { onClearRoute, onGenerateRoute, onInitializeJournal, onRestoreStoredRoute, onRouteSelectionChange, onSelectTarget, onStopJournalTracking, onSuggest },
   ref,
 ) {
   const { showError } = useToast();
@@ -78,6 +81,18 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
     }
   };
 
+  useEffect(() => {
+    const storedRoute = loadStoredRoutePlot();
+    if (!storedRoute || storedRoute.nodes.length === 0) {
+      return;
+    }
+
+    setRouteNodes(storedRoute.nodes);
+    setRouteProgress(storedRoute.progress);
+    setIsRouteListPanelVisible(true);
+    onRestoreStoredRoute(storedRoute.nodes, storedRoute.progress);
+  }, [onRestoreStoredRoute]);
+
   const handleGenerateRoute = async (config: RouteConfig) => {
     try {
       const nextRouteNodes = await onGenerateRoute(config);
@@ -85,6 +100,7 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
       if (nextRouteNodes.length > 0) {
         setRouteNodes(nextRouteNodes);
         setRouteProgress(0);
+        saveStoredRoutePlot({ nodes: nextRouteNodes, progress: 0 });
         onRouteSelectionChange(0);
         setIsRouteListPanelVisible(true);
       }
@@ -126,13 +142,21 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
       <RouteListPanel
         currentProgress={routeProgress}
         nodes={routeNodes}
+        onClose={() => {
+          setIsRouteListPanelVisible(false);
+          setRouteNodes([]);
+          setRouteProgress(0);
+          clearStoredRoutePlot();
+          onClearRoute();
+        }}
         onSetProgress={(nextCheckedByIndex) => {
           setRouteProgress(nextCheckedByIndex);
+          saveStoredRoutePlot({ nodes: routeNodes, progress: nextCheckedByIndex });
           onRouteSelectionChange(nextCheckedByIndex);
         }}
         visible={isRouteListPanelVisible}
       />
-
+ 
       <RouteDialog
         initialFromValue={routeDialogState.fromValue}
         initialSupercharged={routeDialogState.alreadySupercharged}

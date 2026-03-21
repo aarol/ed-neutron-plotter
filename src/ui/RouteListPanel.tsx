@@ -1,3 +1,4 @@
+import { Button } from "./components/Button";
 import type { RouteNode } from "./types";
 import { uiTheme } from "./theme";
 
@@ -5,18 +6,22 @@ interface RouteListPanelProps {
   nodes: RouteNode[];
   visible: boolean;
   currentProgress: number;
+  onClose: () => void;
   onSetProgress: (nextProgress: number) => void;
 }
 
-export function RouteListPanel({ currentProgress, nodes, onSetProgress, visible }: RouteListPanelProps) {
+export function RouteListPanel({ currentProgress, nodes, onClose, onSetProgress, visible }: RouteListPanelProps) {
   if (!visible || nodes.length === 0) {
     return null;
   }
 
   return (
     <div className={`${uiTheme.glassPanel} fixed left-5 top-20 z-998 min-w-70 max-w-[calc(100vw-40px)] w-[min(380px,calc(100vw-40px))] min-h-55 h-[min(60vh,520px)] max-h-[80vh] resize overflow-hidden p-0`}>
-      <div className="border-b border-white/15 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-white/15 px-4 py-3">
         <h3 className="m-0 text-sm font-semibold tracking-[0.03em] text-white/90">Plotted Route</h3>
+        <Button aria-label="Close plotted route" className="h-7 w-7 rounded" onClick={onClose} variant="icon">
+          x
+        </Button>
       </div>
 
       <div className="h-[calc(100%-48px)] overflow-y-auto">

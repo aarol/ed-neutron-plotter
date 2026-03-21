@@ -9,6 +9,7 @@ import Worker from "./web-worker?worker";
 import { Journal } from "./journal/journal";
 import { createRef, render } from "preact";
 import { UI, type UIHandle } from "./ui/UI";
+import { loadStoredFocusedSystem, saveStoredFocusedSystem } from "./ui/focusStorage";
 import { ToastProvider } from "./ui/toast";
 import type { RouteConfig, RouteNode, TargetInfoState } from "./ui/types";
 
@@ -47,6 +48,12 @@ async function main() {
     uiRef.current?.setTargetInfo(target);
   };
 
+  const focusSystem = (target: TargetInfoState) => {
+    galaxy.setTarget(new Vector3(target.x, target.y, target.z));
+    setTargetInfo(target);
+    saveStoredFocusedSystem(target);
+  };
+
   const handleSelectTarget = async (query: string): Promise<TargetInfoState | null> => {
     const pos = await api.getStarCoords(primaryModule, query);
     if (!pos) {
@@ -54,8 +61,10 @@ async function main() {
     }
 
     console.log(`Found star "${query}": (${pos.x}, ${pos.y}, ${pos.z})`);
-    galaxy.setTarget(new Vector3(pos.x, pos.y, pos.z));
-    return { name: query, x: pos.x, y: pos.y, z: pos.z };
+    const target = { name: query, x: pos.x, y: pos.y, z: pos.z };
+    saveStoredFocusedSystem(target);
+    galaxy.setTarget(new Vector3(target.x, target.y, target.z));
+    return target;
   };
 
   const handleGenerateRoute = async (routeConfig: RouteConfig): Promise<RouteNode[]> => {
@@ -87,8 +96,7 @@ async function main() {
         y: coords.y / 1000,
         z: coords.z / 1000,
       };
-      galaxy.setTarget(new Vector3(target.x, target.y, target.z));
-      setTargetInfo(target);
+      focusSystem(target);
     },
   });
 
@@ -99,8 +107,15 @@ async function main() {
       <UI
         onGenerateRoute={handleGenerateRoute}
         onInitializeJournal={() => journal.init()}
+        onRestoreStoredRoute={(nodes, progress) => {
+          galaxy.setRoutePointsFromNodes(nodes);
+          galaxy.setRouteProgress(progress);
+        }}
         onRouteSelectionChange={(checkedIndex) => {
           galaxy.setRouteProgress(checkedIndex);
+        }}
+        onClearRoute={() => {
+          galaxy.clearRoute();
         }}
         onStopJournalTracking={() => journal.stopTracking()}
         onSelectTarget={handleSelectTarget}
@@ -110,6 +125,11 @@ async function main() {
     </ToastProvider>,
     uiRoot,
   );
+
+  const storedFocusedSystem = loadStoredFocusedSystem();
+  if (storedFocusedSystem) {
+    focusSystem(storedFocusedSystem);
+  }
 
   // -----------------------------------------------------------------------
   // Star-click targeting
@@ -151,8 +171,7 @@ async function main() {
 
       const name = primaryModule.get_star_from_coords(x, y, z);
       if (name) {
-        galaxy.setTarget(new Vector3(x, y, z));
-        setTargetInfo({ name, x, y, z });
+        focusSystem({ name, x, y, z });
         return;
       }
     }
@@ -173,8 +192,7 @@ async function main() {
 
     if (hit) {
       const { name, coords } = hit;
-      galaxy.setTarget(new Vector3(coords.x, coords.y, coords.z));
-      setTargetInfo({ name, x: coords.x, y: coords.y, z: coords.z });
+      focusSystem({ name, x: coords.x, y: coords.y, z: coords.z });
     }
   });
 
@@ -209,6 +227,17 @@ async function main() {
       console.log("Star KDTree loaded.");
       await wasmWorker.setKDTree(new Uint8Array(sab));
     });
+
+  window.addEventListener("paste", (event) => {
+    console.log(event.clipboardData?.types)
+    const htmlData = event.clipboardData?.getData("text/html")
+    if (htmlData) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlData, "text/html");
+      const table = doc.querySelector("table");
+      console.log(table)
+    }
+  })
 }
 
 main();

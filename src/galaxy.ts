@@ -108,6 +108,12 @@ export class Galaxy {
     this.requestRenderIfNotRequested();
   }
 
+  clearRoute() {
+    this.routeLine.update(new Float32Array([]));
+    this.routeLine.setProgress(0);
+    this.requestRenderIfNotRequested();
+  }
+
   onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
