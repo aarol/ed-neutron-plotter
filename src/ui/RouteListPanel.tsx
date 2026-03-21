@@ -4,11 +4,11 @@ import { uiTheme } from "./theme";
 interface RouteListPanelProps {
   nodes: RouteNode[];
   visible: boolean;
-  checkedByIndex: boolean[];
-  onCheckedByIndexChange: (nextCheckedByIndex: boolean[]) => void;
+  currentProgress: number;
+  onSetProgress: (nextProgress: number) => void;
 }
 
-export function RouteListPanel({ checkedByIndex, nodes, onCheckedByIndexChange, visible }: RouteListPanelProps) {
+export function RouteListPanel({ currentProgress, nodes, onSetProgress, visible }: RouteListPanelProps) {
   if (!visible || nodes.length === 0) {
     return null;
   }
@@ -23,37 +23,35 @@ export function RouteListPanel({ checkedByIndex, nodes, onCheckedByIndexChange, 
         <table className="w-full border-collapse text-sm text-white/85">
           <thead>
             <tr className="border-b border-white/10 bg-white/5 text-left text-[11px] uppercase tracking-[0.05em] text-white/65">
-              <th className="w-10 px-3 py-2">Use</th>
+              <th className="w-10 px-3 py-2"></th>
               <th className="px-3 py-2">Star</th>
             </tr>
           </thead>
           <tbody>
-            {nodes.map((node, index) => (
-              <tr className="border-b border-white/8 last:border-b-0" key={`${node.name}-${index}`}>
-                <td className="px-3 py-2">
-                  <input
-                    checked={checkedByIndex[index] ?? false}
-                    className="h-3.5 w-3.5 cursor-pointer border border-white/35 bg-black/30 accent-space-accent-strong"
-                    onInput={(event) => {
-                      const nextChecked = (event.currentTarget as HTMLInputElement).checked;
-                      const next = nodes.map((_, currentIndex) => checkedByIndex[currentIndex] ?? false);
-                      if (nextChecked) {
-                        for (let currentIndex = 0; currentIndex <= index; currentIndex += 1) {
-                          next[currentIndex] = true;
-                        }
-                      } else {
-                        for (let currentIndex = index; currentIndex < next.length; currentIndex += 1) {
-                          next[currentIndex] = false;
-                        }
-                      }
-                      onCheckedByIndexChange(next);
-                    }}
-                    type="checkbox"
-                  />
-                </td>
-                <td className="px-3 py-2 font-medium text-white/90">{node.name}</td>
-              </tr>
-            ))}
+            {nodes.map((node, index) => {
+              const checkboxId = `route-node-${index}`;
+
+              return (
+                <tr className="border-b border-white/8 last:border-b-0" key={`${node.name}-${index}`}>
+                  <td className="px-3 py-2">
+                    <input
+                      checked={index <= currentProgress}
+                      className="h-3.5 w-3.5 cursor-pointer border border-white/35 bg-black/30 accent-space-accent-strong"
+                      id={checkboxId}
+                      onInput={(event) => {
+                        const nextChecked = (event.currentTarget as HTMLInputElement).checked;
+                        const nextIndex = nextChecked ? index : index - 1;
+                        onSetProgress(nextIndex);
+                      }}
+                      type="checkbox"
+                    />
+                  </td>
+                  <td className="px-3 py-2 font-medium text-white/90">
+                    <label className="cursor-pointer" htmlFor={checkboxId}>{node.name}</label>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -14,10 +14,15 @@ export class LinePoints extends THREE.Object3D {
   private sprite: THREE.Sprite;
   private positionAttribute: THREE.InstancedBufferAttribute;
   private colorAttribute: THREE.InstancedBufferAttribute;
-  private checkedMask: boolean[] = [];
+  private currentProgress = 0; // Index of the current progress along the route
   private currentPointCount = 0;
 
   private maxPoints: number;
+
+  // For raycasting to detect clicks on the route points
+  private pickPoints: THREE.Points; 
+  private pickGeometry: THREE.BufferGeometry;
+  
 
   constructor(
     initialPointsCount: number,
@@ -66,6 +71,26 @@ export class LinePoints extends THREE.Object3D {
 
     this.add(this.sprite);
 
+    /* ---------- PICK POINTS (RAYCAST ONLY) ---------- */
+
+    this.pickGeometry = new THREE.BufferGeometry();
+    this.pickGeometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([]), 3)
+    );
+
+    const pickMaterial = new THREE.PointsMaterial({
+      size: 12,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+
+    this.pickPoints = new THREE.Points(this.pickGeometry, pickMaterial);
+    this.pickPoints.frustumCulled = false;
+    this.add(this.pickPoints);
+
     /* ---------- INIT ---------- */
 
     this.update(new Float32Array([]));
@@ -73,9 +98,34 @@ export class LinePoints extends THREE.Object3D {
 
   /* ---------- UPDATE ---------- */
 
-  setCheckedMask(mask: boolean[]): void {
-    this.checkedMask = [...mask];
+  setProgress(index: number): void {
+    this.currentProgress = index;
     this.applyPointStyles(this.currentPointCount);
+  }
+
+  getHitSpriteCoords(raycaster: THREE.Raycaster): { x: number; y: number; z: number } | null {
+    const previousPointThreshold = raycaster.params.Points.threshold;
+    raycaster.params.Points.threshold = 0.1;
+
+    const hit = raycaster.intersectObject(this.pickPoints, false)[0];
+    raycaster.params.Points.threshold = previousPointThreshold;
+
+    if (!hit || typeof hit.index !== "number") {
+      return null;
+    }
+
+    const spriteIndex = hit.index;
+    if (spriteIndex < 0 || spriteIndex >= this.currentPointCount) {
+      return null;
+    }
+
+    const offset = spriteIndex * 3;
+    const positions = this.positionAttribute.array as Float32Array;
+    return {
+      x: positions[offset],
+      y: positions[offset + 1],
+      z: positions[offset + 2],
+    };
   }
 
   private applyPointStyles(count: number): void {
@@ -84,7 +134,7 @@ export class LinePoints extends THREE.Object3D {
 
     for (let i = 0; i < count; i += 1) {
       const offset = i * 3;
-      const isChecked = this.checkedMask[i] === true;
+      const isChecked = i <= this.currentProgress;
 
       if (isChecked) {
         // Highlight checked route nodes in red.
@@ -151,6 +201,12 @@ export class LinePoints extends THREE.Object3D {
       new THREE.BufferAttribute(points, 3)
     );
     this.lineGeometry.computeBoundingSphere();
+
+    this.pickGeometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(points, 3)
+    );
+    this.pickGeometry.computeBoundingSphere();
 
     /* Update instanced sprite positions */
     this.positionAttribute.array.set(points);

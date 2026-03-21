@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { uiTheme } from "./theme";
+import { useToast } from "./toast";
 
 interface JournalDialogProps {
   isOpen: boolean;
@@ -8,9 +9,12 @@ interface JournalDialogProps {
 }
 
 export function JournalDialog({ isOpen, onClose, onInitialize }: JournalDialogProps) {
+  const { showError } = useToast();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [isInitializing, setIsInitializing] = useState(false);
   const journalPickerPath = "%userprofile%\\Saved Games\\Frontier Developments\\Elite Dangerous";
+
+  const supportsObserverApi = "FileSystemObserver" in window // If the observer API is supported, then the file system access API must also be supported
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -51,6 +55,7 @@ export function JournalDialog({ isOpen, onClose, onInitialize }: JournalDialogPr
       dialogRef.current?.close();
     } catch (error) {
       console.error("Error accessing journal directory:", error);
+      showError(error instanceof Error ? error.message : "Failed to initialize journal tracking.");
     } finally {
       setIsInitializing(false);
     }
@@ -68,17 +73,14 @@ export function JournalDialog({ isOpen, onClose, onInitialize }: JournalDialogPr
         </button>
       </div>
 
+      {supportsObserverApi ? <>
       <div className="flex flex-col gap-4 px-4.5 pb-5 pt-4.5">
         <p className="m-0 text-[13px] leading-relaxed text-white/80">
           Elite Dangerous has a "journal" feature that logs your in-game location into a file located at <span className="inline-block border border-white/20 bg-white/10 px-1.5 py-0.5 font-mono text-[11.5px] whitespace-nowrap text-[#b4c8ff]">C:\Users\&lt;Username&gt;\Saved Games\Frontier Developments\Elite Dangerous</span>.
         </p>
 
         <p className="m-0 text-[13px] leading-relaxed text-white/80">
-          Via the <a href="https://developer.mozilla.org/en-US/docs/Web/API/FileSystemObserver">FileSystemObserver</a> API, browsers can listen for changes in files such as the ED journal.
-        </p>
-
-        <p className="m-0 text-[13px] leading-relaxed text-white/80">
-          To enable real-time tracking of your in-game location, please click the "Select Directory" button below and navigate to the directory above and click "Select".
+          To enable real-time tracking of your in-game location, please click the "Select Directory" button below, navigate to the directory shown above and click "Select".
 
           You can also copy and paste the following path into the file picker dialog to navigate there directly:{" "}
           <span className="inline-flex items-center gap-1 align-middle">
@@ -105,6 +107,15 @@ export function JournalDialog({ isOpen, onClose, onInitialize }: JournalDialogPr
           Select Directory
         </button>
       </div>
+      </> : <>
+      <div className="flex flex-col gap-4 px-4.5 pb-5 pt-4.5">
+        <p className="m-0 text-[13px] leading-relaxed text-white/80">
+          Your browser does not support the File System Access API, which is required for real-time tracking of your in-game location. Please use a compatible browser (like Chrome or Edge) to access this feature.
+        </p>
+      </div>
+      </>}
+
+      
     </dialog>
   );
 }

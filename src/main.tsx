@@ -9,6 +9,7 @@ import Worker from "./web-worker?worker";
 import { Journal } from "./journal/journal";
 import { createRef, render } from "preact";
 import { UI, type UIHandle } from "./ui/UI";
+import { ToastProvider } from "./ui/toast";
 import type { RouteConfig, RouteNode, TargetInfoState } from "./ui/types";
 
 async function main() {
@@ -58,19 +59,18 @@ async function main() {
   };
 
   const handleGenerateRoute = async (routeConfig: RouteConfig): Promise<RouteNode[]> => {
-    console.log("Route configuration:", routeConfig);
 
     const start = await api.getStarCoords(primaryModule, routeConfig.from);
     const end = await api.getStarCoords(primaryModule, routeConfig.to);
 
     if (!start || !end) {
       console.error("Could not get coordinates for stars", routeConfig.from, routeConfig.to);
-      return [];
+      throw new Error(`Could not find coordinates for "${routeConfig.from}" or "${routeConfig.to}".`);
     }
 
     const res = await wasmWorker.findRoute(start, end, Comlink.proxy(routeReportCallback));
     if (res) {
-      res.forEach((node) => console.log(`Route node: ${node.name} at (${node.coords.x}, ${node.coords.y}, ${node.coords.z})`));
+      galaxy.setRoutePointsFromNodes(res);
       return res as RouteNode[];
     }
 
@@ -94,17 +94,19 @@ async function main() {
   const uiRoot = document.createElement("div");
   document.body.appendChild(uiRoot);
   render(
-    <UI
-      onGenerateRoute={handleGenerateRoute}
-      onInitializeJournal={() => journal.init()}
-      onRouteSelectionChange={(checkedByIndex) => {
-        galaxy.setRoutePointHighlights(checkedByIndex);
-      }}
-      onStopJournalTracking={() => journal.stopTracking()}
-      onSelectTarget={handleSelectTarget}
-      onSuggest={onSuggest}
-      ref={uiRef}
-    />,
+    <ToastProvider>
+      <UI
+        onGenerateRoute={handleGenerateRoute}
+        onInitializeJournal={() => journal.init()}
+        onRouteSelectionChange={(checkedIndex) => {
+          galaxy.setRouteProgress(checkedIndex);
+        }}
+        onStopJournalTracking={() => journal.stopTracking()}
+        onSelectTarget={handleSelectTarget}
+        onSuggest={onSuggest}
+        ref={uiRef}
+      />
+    </ToastProvider>,
     uiRoot,
   );
 
@@ -135,11 +137,24 @@ async function main() {
 
     // Convert to Normalised Device Coordinates [-1, 1]
     const ndc = new Vector2(
-      (e.clientX / window.innerWidth)  *  2 - 1,
+      (e.clientX / window.innerWidth) * 2 - 1,
       -(e.clientY / window.innerHeight) * 2 + 1,
     );
 
     raycaster.setFromCamera(ndc, galaxy.camera);
+
+    // If the route line was clicked, target that point instead of some other nearby star
+    const routeCoords = galaxy.routeLine.getHitSpriteCoords(raycaster);
+    if (routeCoords) {
+      const { x, y, z } = routeCoords;
+
+      const name = primaryModule.get_star_from_coords(x, y, z);
+      if (name) {
+        galaxy.setTarget(new Vector3(x, y, z));
+        setTargetInfo({ name, x, y, z });
+        return;
+      }
+    }
 
     // Compute angular pick tolerance: ~8 px in screen space
     // camera.fov is vertical (degrees); convert to radians per pixel

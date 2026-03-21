@@ -3,6 +3,7 @@ import Stats from 'three/examples/jsm/libs/stats.module.js';
 import { color, float, uniform, vec4 } from 'three/tsl';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Scene, SphereGeometry, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
 import { LinePoints } from './line-points';
+import type { RouteNode } from './ui/types';
 
 
 export class Galaxy {
@@ -90,8 +91,20 @@ export class Galaxy {
     this.requestRenderIfNotRequested()
   }
 
-  setRoutePointHighlights(checkedByIndex: boolean[]) {
-    this.routeLine.setCheckedMask(checkedByIndex);
+  setRoutePointsFromNodes(nodes: RouteNode[]) {
+    // Convert nodes to Float32Array format
+    const points = new Float32Array(nodes.length * 3);
+    nodes.forEach((node, i) => {
+      points[i * 3] = node.coords.x;
+      points[i * 3 + 1] = node.coords.y;
+      points[i * 3 + 2] = node.coords.z;
+    });
+    this.routeLine.update(points);
+    this.requestRenderIfNotRequested()
+  }
+
+  setRouteProgress(index: number) {
+    this.routeLine.setProgress(index);
     this.requestRenderIfNotRequested();
   }
 

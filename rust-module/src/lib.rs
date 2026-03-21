@@ -112,6 +112,20 @@ impl Module {
         }
     }
 
+    pub fn get_star_from_coords(&self, x: f32, y: f32, z: f32) -> Option<String> {
+        let target = Coords([x, y, z]);
+        match (&self.stars, &self.kdtree, &self.trie) {
+            (Some(stars), Some(kdtree), Some(trie)) => {
+                if let Some((index, _)) = kdtree.nearest(target, stars) {
+                    trie.get_key_from_index(index as usize)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn get_coords_for_star(&self, star_name: &str) -> Option<JsValue> {
         match (&self.trie, &self.stars) {
             (Some(trie), Some(stars)) => {
@@ -163,7 +177,6 @@ impl Module {
         let tolerance_sq = angular_tolerance * angular_tolerance;
 
         let mut best_idx: Option<u32> = None;
-        let mut best_t: f32 = 0.0;
         let mut best_ang_sq = f32::INFINITY;
 
         // Exponentially-spaced samples
@@ -206,7 +219,6 @@ impl Module {
                 if ang_sq <= tolerance_sq && ang_sq < best_ang_sq {
                     best_ang_sq = ang_sq;
                     best_idx = Some(idx);
-                    best_t = t_proj;
                 }
             }
 
@@ -219,8 +231,6 @@ impl Module {
                 let name = trie
                     .get_key_from_index(idx as usize)
                     .unwrap_or_else(|| "Unknown".to_string());
-
-                let idx2 = trie.find(&name);
 
                 serde_wasm_bindgen::to_value(&RouteNode {
                     coords: CoordsSerde::from(coords),
