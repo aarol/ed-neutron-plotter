@@ -16,20 +16,22 @@ The codebase has two parts:
 ```
 src/                    TypeScript frontend (Vite + Three.js)
   main.tsx              Entry point; initializes WASM, Galaxy, worker, ray-pick, and mounts UI
-  galaxy.ts             Three.js WebGPU scene (stars, route line, camera)
+  galaxy.ts             Three.js WebGPU scene (stars, route line, camera, route progress)
   api.ts                Star coordinate resolution (local WASM or remote EDSM API fallback)
   web-worker.ts         Comlink web worker wrapper — runs WASM pathfinding off-main-thread
-  line-points.ts        Three.js helper for rendering the route line
+  line-points.ts        Route line + route node sprites + hidden pick points for raycasting
   journal/journal.ts    File System Access API for reading ED journal files
   ui/                   Preact UI components and styles
-    UI.tsx              Top-level UI orchestration (search, dialogs, target bar)
+    UI.tsx              Top-level UI orchestration (search, dialogs, target bar, route progress)
     SearchBox.tsx       Autocomplete search input component
     SearchBar.tsx       Top search row (search input + GPS button)
     TargetInfo.tsx      Bottom target info bar + route trigger
     RouteDialog.tsx     Route configuration dialog (from/to/supercharged)
+    RouteListPanel.tsx  Route node checklist panel for marking route progress
     JournalDialog.tsx   Journal setup dialog UI
-    *.module.css        Component-scoped styles
-    shared.module.css   Shared style primitives composed by UI modules
+    toast.tsx           Toast context/provider for bottom-right error notifications
+    components/Button.tsx Shared Button component with style variants
+    theme.ts            Shared utility-class style tokens for UI elements
     types.ts            Shared UI types (RouteConfig, target info)
 
 rust-module/            Rust crate compiled to WASM with wasm-pack
@@ -56,6 +58,9 @@ public/data/            Pre-generated binary data (committed / gitignored varies
 - **LOUDS trie** — A level-order unary degree sequence trie serialised to `search_trie.bin`. The trie stores only searchable star names; coordinates are stored separately in sorted order so the trie doesn't need to embed them.
 - **Beam-search A\*** — The plotter in `plotter.rs` uses an approximate A* with a configurable beam width to keep route finding fast over millions of nodes.
 - **SharedArrayBuffer** — Star position data is placed in a `SharedArrayBuffer` so both the main thread and the worker can read star coordinates without copying.
+- **Route progress model** — Route progress is tracked as a numeric index ("visited count"), shared between `RouteListPanel` checkboxes and route coloring in `LinePoints.setProgress`.
+- **Route-point-first picking** — Click handling checks route node pick points first (`LinePoints.getHitSpriteCoords`) before falling back to `find_star_near_ray` KD-tree selection.
+- **Toast errors via context** — Error notifications are shown through `ToastProvider` / `useToast` and rendered as bottom-right dismissible toasts.
 
 ---
 
@@ -108,12 +113,22 @@ User submits route
   └─ api.getStarCoords()        →  Module.get_coords_for_star() or EDSM API
   └─ WasmWorker.findRoute(start, end, callback)  →  plotter::plot() (worker thread)
        └─ routeReportCallback()  →  galaxy.setRoutePoints()  →  Three.js line update
+       └─ final route nodes      →  galaxy.setRoutePointsFromNodes() + RouteListPanel
+
+User marks route progress
+  └─ UI/RouteListPanel checkbox input  →  UI routeProgress state
+  └─ UI.onRouteSelectionChange(index)  →  galaxy.setRouteProgress(index)
 
 Journal initialization
   └─ UI/JournalDialog.onInitialize()  →  main.tsx journal.init()
 
 Star pick in 3D scene
-  └─ main.tsx raycaster + Module.find_star_near_ray()  →  UI target info update
+  └─ main.tsx raycaster + routeLine.getHitSpriteCoords() (route nodes first)
+  └─ fallback: Module.find_star_near_ray()  →  UI target info update
+
+UI error reporting
+  └─ Component catches error  →  useToast().showError(message)
+  └─ ToastProvider renders notification in bottom-right corner
 ```
 
 ---
@@ -129,6 +144,8 @@ Exposed on `Module` (from `rust-module/pkg`):
 | `set_kdtree(data: Uint8Array)` | Load the KD-tree index |
 | `suggest_words(prefix, n)` | Return up to `n` autocomplete suggestions |
 | `get_coords_for_star(name)` | Return `{x, y, z}` or `undefined` |
+| `get_star_from_coords(x, y, z)` | Resolve a star name from coordinates, if known |
+| `find_star_near_ray(...)` | Return nearest star to ray within angular tolerance |
 | `find_route(start, end, cb)` | Run beam-search A*, calling `cb` with progress; returns flat `Float32Array` of route coords |
 
 ---
@@ -136,7 +153,9 @@ Exposed on `Module` (from `rust-module/pkg`):
 ## File Conventions
 
 - **UI location** — UI components live under `src/ui/` and are implemented as `*.tsx` Preact components.
-- **CSS Modules** — Component-scoped styles use `*.module.css` (e.g. `ui/SearchBox.module.css`, `ui/RouteDialog.module.css`).
+- **Styling approach** — UI uses Tailwind utility classes + shared class-token strings in `ui/theme.ts` (no CSS module files in current frontend UI).
+- **Shared button abstraction** — Use `ui/components/Button.tsx` for buttons; prefer `variant` (`primary`, `secondary`, `icon`, `plain`) plus `className` for per-callsite customization.
+- **Toast usage** — Error notifications should go through `useToast()` within components mounted under `ToastProvider`.
 - **TypeScript strict mode** is enabled (`tsconfig.json`).
 - **No test framework** is currently set up for the frontend. Rust unit tests live in the same source files (`#[cfg(test)]` blocks).
 - The `vite.config.js` uses `vite-plugin-wasm` and `vite-plugin-top-level-await` to support WASM imports.
