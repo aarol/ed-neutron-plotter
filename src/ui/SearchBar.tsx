@@ -1,5 +1,6 @@
 import { SearchBox } from "./SearchBox";
 import type { SearchSubmitOptions } from "./SearchBox";
+import { Button } from "./components/Button";
 
 interface SearchBarProps {
   onSearch: (query: string, options: SearchSubmitOptions) => void;
@@ -19,16 +20,16 @@ export function SearchBar({ isJournalTracking, onClickRoute, onOpenJournal, onSe
         placeholder="Enter target star.."
         showRouteButton={false}
         rightIcon={
-          <button
+          <Button
             aria-label="Track in-game location"
-            className={`flex h-full w-full items-center justify-center border border-transparent p-0 transition ${
+            className={`flex h-full w-full items-center justify-center border border-transparent p-0 ${
               isJournalTracking
                 ? "bg-space-accent-strong/20 text-space-accent drop-shadow-[0_0_10px_rgba(106,166,255,0.75)] hover:bg-space-accent-strong/30"
                 : "bg-transparent text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.6)] hover:bg-white/10"
             }`.trim()}
             onClick={onOpenJournal}
             title={isJournalTracking ? "Stop tracking in-game location" : "Track in-game location"}
-            type="button"
+            variant="plain"
           >
             <svg className="h-5 w-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="8" />
@@ -38,7 +39,7 @@ export function SearchBar({ isJournalTracking, onClickRoute, onOpenJournal, onSe
               <line x1="19" x2="22" y1="12" y2="12" />
               <circle cx="12" cy="12" r="3" />
             </svg>
-          </button>
+          </Button>
         }
       />
     </div>

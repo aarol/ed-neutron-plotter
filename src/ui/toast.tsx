@@ -1,5 +1,6 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useCallback, useContext, useMemo, useRef, useState } from "preact/hooks";
+import { Button } from "./components/Button";
 
 interface ToastItem {
   id: number;
@@ -58,13 +59,13 @@ export function ToastProvider({ children }: { children: ComponentChildren }) {
             <div className="flex items-start gap-2.5">
               <span className="mt-px text-[11px] leading-none text-red-300">ERROR</span>
               <p className="m-0 flex-1 leading-relaxed">{toast.message}</p>
-              <button
-                className="border border-red-300/35 px-1 text-[11px] text-red-100/90 transition hover:bg-red-200/15"
+              <Button
+                className="border border-red-300/35 px-1 text-[11px] text-red-100/90 hover:bg-red-200/15"
                 onClick={() => dismissToast(toast.id)}
-                type="button"
+                variant="plain"
               >
                 x
-              </button>
+              </Button>
             </div>
           </div>
         ))}

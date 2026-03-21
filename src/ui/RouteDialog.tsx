@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { SearchBox, type SearchBoxHandle } from "./SearchBox";
+import { Button } from "./components/Button";
 import type { RouteConfig } from "./types";
 import { uiTheme } from "./theme";
 
@@ -87,9 +88,9 @@ export function RouteDialog({
     <div className={`${uiTheme.glassPanel} fixed left-5 top-20 z-999 w-280px p-4`}>
       <div className={`${uiTheme.panelHeader} mb-3`}>
         <h2 className={uiTheme.panelTitle}>Configure Route</h2>
-        <button className={uiTheme.iconButton} onClick={onClose} type="button">
+        <Button onClick={onClose} variant="icon">
           ×
-        </button>
+        </Button>
       </div>
 
       <div className="relative mb-2.5">
@@ -133,21 +134,17 @@ export function RouteDialog({
       </div>
 
       <div className="flex justify-end gap-2">
-        <button className={uiTheme.ghostButton} onClick={onClose} type="button">
+        <Button onClick={onClose} variant="secondary">
           Cancel
-        </button>
-        <button
-          className={
-            canGenerate
-              ? uiTheme.primaryButton
-              : "border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/45 shadow-none transition"
-          }
+        </Button>
+        <Button
+          className={!canGenerate ? "border-white/25 bg-white/10 text-white/45 shadow-none hover:border-white/25 hover:bg-white/10" : undefined}
           disabled={isSubmitting || !canGenerate}
           onClick={() => void handleGenerate()}
-          type="button"
+          variant="primary"
         >
           Generate Route
-        </button>
+        </Button>
       </div>
     </div>
   );

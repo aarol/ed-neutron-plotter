@@ -1,4 +1,5 @@
 import type { TargetInfoState } from "./types";
+import { Button } from "./components/Button";
 import { uiTheme } from "./theme";
 
 interface TargetInfoProps {
@@ -23,15 +24,15 @@ export function TargetInfo({ isRoutePanelOpen, onOpenRoute, target }: TargetInfo
       </div>
 
       <div className={`flex items-stretch ${dividerClassName}`}>
-        <button
+        <Button
           aria-label="Plot route"
           className={plotButtonClassName}
           onClick={() => onOpenRoute(target.name)}
           title="Find route to target"
-          type="button"
+          variant="plain"
         >
           PLOT
-        </button>
+        </Button>
       </div>
     </div>
   );

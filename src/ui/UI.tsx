@@ -126,9 +126,9 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
       <RouteListPanel
         currentProgress={routeProgress}
         nodes={routeNodes}
-        onSetProgress={(nextProgress) => {
-          setRouteProgress(nextProgress);
-          onRouteSelectionChange(nextProgress);
+        onSetProgress={(nextCheckedByIndex) => {
+          setRouteProgress(nextCheckedByIndex);
+          onRouteSelectionChange(nextCheckedByIndex);
         }}
         visible={isRouteListPanelVisible}
       />

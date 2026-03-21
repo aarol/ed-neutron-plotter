@@ -2,6 +2,7 @@ import * as directionSvg from "../directions.svg";
 import { forwardRef } from "preact/compat";
 import type { ComponentChildren } from "preact";
 import { useEffect, useImperativeHandle, useRef, useState } from "preact/hooks";
+import { Button } from "./components/Button";
 import { uiTheme } from "./theme";
 
 export interface SearchSubmitOptions {
@@ -187,19 +188,19 @@ export const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>(function Se
           ) : null}
 
           {!hasRightIcon && isRouteVisible ? (
-            <button
+            <Button
               aria-label="Find route to target"
-              className="mr-2 flex h-6 w-6 items-center justify-center border border-transparent bg-transparent p-0 opacity-70 transition hover:opacity-100"
+              className="mr-2 flex h-6 w-6 items-center justify-center border border-transparent bg-transparent p-0 opacity-70 hover:opacity-100"
               onClick={() => {
                 if (value.trim() && onClickRoute) {
                   onClickRoute(value);
                 }
               }}
               title="Find route to target"
-              type="button"
+              variant="plain"
             >
               <img alt="" aria-hidden="true" className="h-5 w-5 invert" src={directionSvg.default} />
-            </button>
+            </Button>
           ) : null}
         </div>
 

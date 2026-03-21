@@ -35,12 +35,12 @@ export function RouteListPanel({ currentProgress, nodes, onSetProgress, visible 
                 <tr className="border-b border-white/8 last:border-b-0" key={`${node.name}-${index}`}>
                   <td className="px-3 py-2">
                     <input
-                      checked={index <= currentProgress}
+                      checked={index < currentProgress}
                       className="h-3.5 w-3.5 cursor-pointer border border-white/35 bg-black/30 accent-space-accent-strong"
                       id={checkboxId}
                       onInput={(event) => {
                         const nextChecked = (event.currentTarget as HTMLInputElement).checked;
-                        const nextIndex = nextChecked ? index : index - 1;
+                        const nextIndex = nextChecked ? index+1 : index;
                         onSetProgress(nextIndex);
                       }}
                       type="checkbox"

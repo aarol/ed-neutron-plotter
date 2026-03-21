@@ -14,7 +14,10 @@ export class LinePoints extends THREE.Object3D {
   private sprite: THREE.Sprite;
   private positionAttribute: THREE.InstancedBufferAttribute;
   private colorAttribute: THREE.InstancedBufferAttribute;
-  private currentProgress = 0; // Index of the current progress along the route
+  // Index of the current progress along the route
+  // If zero, then the first star has not been visited.
+  private currentProgress = 0; 
+  
   private currentPointCount = 0;
 
   private maxPoints: number;
@@ -134,7 +137,7 @@ export class LinePoints extends THREE.Object3D {
 
     for (let i = 0; i < count; i += 1) {
       const offset = i * 3;
-      const isChecked = i <= this.currentProgress;
+      const isChecked = i <= (this.currentProgress-1);
 
       if (isChecked) {
         // Highlight checked route nodes in red.

@@ -59,6 +59,7 @@ async function main() {
   };
 
   const handleGenerateRoute = async (routeConfig: RouteConfig): Promise<RouteNode[]> => {
+    galaxy.setRouteProgress(0) // Clear progress highlight while generating a new route
 
     const start = await api.getStarCoords(primaryModule, routeConfig.from);
     const end = await api.getStarCoords(primaryModule, routeConfig.to);
