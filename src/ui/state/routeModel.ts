@@ -1,12 +1,12 @@
 import { createModel, Signal, signal } from "@preact/signals"
 import { createContext, type Context } from "preact"
-import type { RouteNode } from "../types"
+import type { StarSystem } from "../types"
 import { loadStoredRoutePlot, saveStoredRoutePlot } from "./localStorage";
 
 export interface RouteState {
-  nodes: Signal<RouteNode[]>;
+  nodes: Signal<StarSystem[]>;
   progress: Signal<number>;
-  setRoute: (newNodes: RouteNode[]) => void;
+  setRoute: (newNodes: StarSystem[]) => void;
   clearRoute: () => void;
   setProgress: (nextProgress: number) => void;
 }
@@ -15,14 +15,14 @@ export const RouteModel = createModel<RouteState>(() => {
 
   const storedRoute = loadStoredRoutePlot();
 
-  const nodes = signal<RouteNode[]>(storedRoute?.nodes ?? [])
+  const nodes = signal<StarSystem[]>(storedRoute?.nodes ?? [])
   const progress = signal(storedRoute?.progress ?? 0)
 
   return {
     nodes,
     progress,
 
-    setRoute(newNodes: RouteNode[]) {
+    setRoute(newNodes: StarSystem[]) {
       nodes.value = newNodes
       progress.value = 0
       saveStoredRoutePlot({nodes: newNodes, progress: progress.value})

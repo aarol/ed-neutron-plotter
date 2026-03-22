@@ -1,5 +1,4 @@
-import { forwardRef } from "preact/compat";
-import { useContext, useImperativeHandle, useState } from "preact/hooks";
+import { useContext, useState } from "preact/hooks";
 import { JournalDialog } from "./JournalDialog";
 import { RouteListPanel } from "./RouteListPanel";
 import { RouteDialog } from "./RouteDialog";
@@ -7,62 +6,37 @@ import { SearchBar } from "./SearchBar";
 import type { SearchSubmitOptions } from "./SearchBox";
 import { TargetInfo } from "./TargetInfo";
 import { useToast } from "./toast";
-import type { RouteConfig, RouteNode, TargetInfoState } from "./types";
+import type { RouteConfig, StarSystem } from "./types";
 import { RouteContext } from "./state/routeModel";
 import { Show } from "@preact/signals/utils";
-import { computed } from "@preact/signals";
+import { computed, signal } from "@preact/signals";
+import { JournalContext } from "./state/journalModel";
+import { loadStoredFocusedSystem } from "./state/localStorage";
 
 export interface UIProps {
-  onGenerateRoute: (config: RouteConfig) => Promise<RouteNode[]>;
+  onGenerateRoute: (config: RouteConfig) => Promise<StarSystem[]>;
   onRouteSelectionChange: (index: number) => void;
-  onRestoreStoredRoute: (nodes: RouteNode[], progress: number) => void;
-  onInitializeJournal: () => Promise<void>;
-  onStopJournalTracking: () => void;
-  onSelectTarget: (query: string) => Promise<TargetInfoState | null>;
+  onRestoreStoredRoute: (nodes: StarSystem[], progress: number) => void;
+  onSelectTarget: (query: string) => Promise<StarSystem | null>;
   onSuggest: (word: string) => string[];
 }
 
-export interface UIHandle {
-  openRouteDialog: (word: string) => void;
-  setTargetInfo: (target: TargetInfoState) => void;
-}
+export const showJournalDialog = signal(false);
+export const showRouteDialog = signal(false);
 
-export const UI = forwardRef<UIHandle, UIProps>(function UI(
-  { onGenerateRoute, onInitializeJournal, onSelectTarget, onStopJournalTracking, onSuggest },
-  ref,
-) {
+export const focusedSystem = signal<StarSystem>(loadStoredFocusedSystem() ?? { name: "Sol", coords: { x: 0, y: 0, z: 0 } });
+
+export function UI({ onGenerateRoute, onSelectTarget, onSuggest }: UIProps) {
   const { showError } = useToast();
-  const [target, setTarget] = useState<TargetInfoState>({ name: "Sol", x: 0, y: 0, z: 0 });
-  const [isJournalOpen, setIsJournalOpen] = useState(false);
-  const [isJournalTracking, setIsJournalTracking] = useState(false);
+  const journalState = useContext(JournalContext)!;
   const routeState = useContext(RouteContext)!;
   const showRouteListPanel = computed(() => routeState.nodes.value.length > 0);
-
-  const [routeDialogState, setRouteDialogState] = useState({
-    isOpen: false,
-    fromValue: "",
-    toValue: "",
-    alreadySupercharged: false,
-  });
+  const [routeDialogToValue, setRouteDialogToValue] = useState("");
 
   const openRouteDialog = (word: string) => {
-    setRouteDialogState((currentState) => ({
-      ...currentState,
-      isOpen: true,
-      toValue: word,
-    }));
+    setRouteDialogToValue(word);
+    showRouteDialog.value = true;
   };
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      openRouteDialog,
-      setTargetInfo: (nextTarget: TargetInfoState) => {
-        setTarget(nextTarget);
-      },
-    }),
-    [],
-  );
 
   const handleSearch = async (query: string, options: SearchSubmitOptions) => {
     try {
@@ -72,7 +46,7 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
         return;
       }
 
-      setTarget(nextTarget);
+      focusedSystem.value = nextTarget;
       if (options.openRoute) {
         openRouteDialog(query);
       }
@@ -88,29 +62,18 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
     } catch (error) {
       showError(error instanceof Error ? error.message : "Failed to generate route.");
     }
-
-    setRouteDialogState({
-      isOpen: false,
-      fromValue: config.from,
-      toValue: config.to,
-      alreadySupercharged: config.alreadySupercharged,
-    });
   };
 
   return (
     <>
       <SearchBar
         onClickRoute={openRouteDialog}
-        isJournalTracking={isJournalTracking}
-        onOpenJournal={() => {
-          if (isJournalTracking) {
-            onStopJournalTracking();
-            setIsJournalTracking(false);
-            setIsJournalOpen(false);
+        onOpenJournal={async () => {
+          if (journalState.enabled.value) {
+            journalState.stop();
             return;
           }
-
-          setIsJournalOpen(true);
+          showJournalDialog.value = true;
         }}
         onSearch={(query, options) => {
           void handleSearch(query, options);
@@ -118,30 +81,19 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
         onSuggest={onSuggest}
       />
 
-      <TargetInfo isRoutePanelOpen={routeDialogState.isOpen} onOpenRoute={openRouteDialog} target={target} />
+      <TargetInfo isRoutePanelOpen={showRouteDialog.value} onOpenRoute={openRouteDialog} />
 
       <Show when={showRouteListPanel}>
         <RouteListPanel />
       </Show>
 
       <RouteDialog
-        initialFromValue={routeDialogState.fromValue}
-        initialSupercharged={routeDialogState.alreadySupercharged}
-        initialToValue={routeDialogState.toValue}
-        isOpen={routeDialogState.isOpen}
-        onClose={() => setRouteDialogState((currentState) => ({ ...currentState, isOpen: false }))}
+        initialToValue={routeDialogToValue}
         onSubmit={handleGenerateRoute}
         onSuggest={onSuggest}
       />
 
-      <JournalDialog
-        isOpen={isJournalOpen}
-        onClose={() => setIsJournalOpen(false)}
-        onInitialize={async () => {
-          await onInitializeJournal();
-          setIsJournalTracking(true);
-        }}
-      />
+      <JournalDialog />
     </>
   );
-});
+};

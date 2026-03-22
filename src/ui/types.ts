@@ -4,18 +4,11 @@ export interface RouteConfig {
   alreadySupercharged: boolean;
 }
 
-export interface RouteNode {
+export interface StarSystem {
   name: string;
   coords: {
     x: number;
     y: number;
     z: number;
   };
-}
-
-export interface TargetInfoState {
-  name: string;
-  x: number;
-  y: number;
-  z: number;
 }

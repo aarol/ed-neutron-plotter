@@ -1,11 +1,11 @@
+import type { StarSystem } from "../ui/types";
 
-type LocationCallback = (starName: string, coords: { x: number, y: number, z: number }) => void;
+type LocationCallback = (starSystem: StarSystem) => void;
 
 export class Journal {
   private directoryHandle: FileSystemDirectoryHandle | null = null;
   private lastLocation: string | null = null;
   private observer: FileSystemObserver | null = null;
-  private isTracking = false;
 
   onNewLocation: LocationCallback;
 
@@ -45,12 +45,10 @@ export class Journal {
 
     await observer.observe(handle);
     this.observer = observer;
-    this.isTracking = true;
   }
 
   stopTracking(): void {
     if (!this.observer) {
-      this.isTracking = false;
       return;
     }
 
@@ -61,14 +59,13 @@ export class Journal {
         // Ignore cleanup errors if observer was already detached.
       }
     }
-
     this.observer.disconnect();
     this.observer = null;
-    this.isTracking = false;
+    this.lastLocation = null;
   }
 
   get tracking(): boolean {
-    return this.isTracking;
+    return this.observer !== null;
   }
 
   async findLatestJournalFile(): Promise<File | null> {
@@ -98,10 +95,13 @@ export class Journal {
   update(event: FSDJumpEvent): void {
     if (event.StarSystem !== this.lastLocation) {
       this.lastLocation = event.StarSystem;
-      this.onNewLocation(event.StarSystem, {
-        x: event.StarPos[0],
-        y: event.StarPos[1],
-        z: event.StarPos[2]
+      this.onNewLocation({
+        name: event.StarSystem,
+        coords: {
+          x: event.StarPos[0] / 1000.0,
+          y: event.StarPos[1] / 1000.0,
+          z: event.StarPos[2] / 1000.0,
+        }
       });
     }
   }

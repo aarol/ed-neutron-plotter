@@ -6,14 +6,14 @@ import { api } from "./api";
 import * as Comlink from "comlink";
 import { WasmWorker as WasmWorkerAPI } from "./web-worker";
 import Worker from "./web-worker?worker";
-import { Journal } from "./journal/journal";
-import { createRef, render } from "preact";
-import { UI, type UIHandle } from "./ui/UI";
-import { loadStoredFocusedSystem, saveStoredFocusedSystem } from "./ui/focusStorage";
+import { render } from "preact";
+import { focusedSystem, UI } from "./ui/UI";
 import { ToastProvider } from "./ui/toast";
-import type { RouteConfig, RouteNode, TargetInfoState } from "./ui/types";
+import type { RouteConfig, StarSystem } from "./ui/types";
 import { RouteContext, RouteModel, type RouteState } from "./ui/state/routeModel";
 import { effect } from "@preact/signals";
+import { JournalContext, JournalModel, type JournalState } from "./ui/state/journalModel";
+import { saveStoredFocusedSystem } from "./ui/state/localStorage";
 
 async function main() {
   await init();
@@ -28,7 +28,6 @@ async function main() {
 
   // @ts-ignore
   const wasmWorker: Comlink.Remote<WasmWorkerAPI> = await new WasmWorker();
-  const uiRef = createRef<UIHandle>();
 
   function onSuggest(prefix: string) {
     if (primaryModule) {
@@ -46,30 +45,20 @@ async function main() {
     galaxy.setRoutePoints(starData);
   }
 
-  const setTargetInfo = (target: TargetInfoState) => {
-    uiRef.current?.setTargetInfo(target);
-  };
 
-  const focusSystem = (target: TargetInfoState) => {
-    galaxy.setTarget(new Vector3(target.x, target.y, target.z));
-    setTargetInfo(target);
-    saveStoredFocusedSystem(target);
-  };
-
-  const handleSelectTarget = async (query: string): Promise<TargetInfoState | null> => {
+  const handleSelectTarget = async (query: string): Promise<StarSystem | null> => {
     const pos = await api.getStarCoords(primaryModule, query);
     if (!pos) {
       return null;
     }
 
     console.log(`Found star "${query}": (${pos.x}, ${pos.y}, ${pos.z})`);
-    const target = { name: query, x: pos.x, y: pos.y, z: pos.z };
-    saveStoredFocusedSystem(target);
-    galaxy.setTarget(new Vector3(target.x, target.y, target.z));
+    const target = { name: query, coords: pos };
+    galaxy.setTarget(new Vector3(target.coords.x, target.coords.y, target.coords.z));
     return target;
   };
 
-  const handleGenerateRoute = async (routeConfig: RouteConfig): Promise<RouteNode[]> => {
+  const handleGenerateRoute = async (routeConfig: RouteConfig): Promise<StarSystem[]> => {
     galaxy.setRouteProgress(0) // Clear progress highlight while generating a new route
 
     const start = await api.getStarCoords(primaryModule, routeConfig.from);
@@ -83,27 +72,33 @@ async function main() {
     const res = await wasmWorker.findRoute(start, end, Comlink.proxy(routeReportCallback));
     if (res) {
       galaxy.setRoutePointsFromNodes(res);
-      return res as RouteNode[];
+      return res as StarSystem[];
     }
 
     return [];
   };
 
-  const journal = new Journal({
-    onNewLocation: async (starName, coords) => {
-      console.log(`New location: ${starName} at (${coords.x}, ${coords.y}, ${coords.z})`);
-      const target = {
-        name: starName,
-        x: coords.x / 1000,
-        y: coords.y / 1000,
-        z: coords.z / 1000,
-      };
-      focusSystem(target);
-    },
-  });
+  effect(() => {
+    const system = focusedSystem.value;
+    if (system) {
+      const { x, y, z } = system.coords;
+      console.log(`Focusing on system: ${system.name} at (${x}, ${y}, ${z})`);
 
-  const uiRoot = document.createElement("div");
-  document.body.appendChild(uiRoot);
+      galaxy.setTarget(new Vector3(x, y, z));
+      saveStoredFocusedSystem(system);
+    }
+  })
+
+  const journalModel: JournalState = new JournalModel();
+
+  effect(() => {
+    const lastSystem = journalModel.lastSystem.value;
+    if (lastSystem) {
+      console.log(`New location from journal: ${lastSystem.name} at (${lastSystem.coords.x}, ${lastSystem.coords.y}, ${lastSystem.coords.z})`);
+
+      focusedSystem.value = lastSystem;
+    }
+  });
 
   const routeModel: RouteState = new RouteModel();
 
@@ -114,33 +109,30 @@ async function main() {
     galaxy.setRouteProgress(progress);
   })
 
+  const uiRoot = document.createElement("div");
+  document.body.appendChild(uiRoot);
+
   render(
     <ToastProvider>
       <RouteContext.Provider value={routeModel}>
-        <UI
-          onGenerateRoute={handleGenerateRoute}
-          onInitializeJournal={() => journal.init()}
-          onRestoreStoredRoute={(nodes, progress) => {
-            galaxy.setRoutePointsFromNodes(nodes);
-            galaxy.setRouteProgress(progress);
-          }}
-          onRouteSelectionChange={(checkedIndex) => {
-            galaxy.setRouteProgress(checkedIndex);
-          }}
-          onStopJournalTracking={() => journal.stopTracking()}
-          onSelectTarget={handleSelectTarget}
-          onSuggest={onSuggest}
-          ref={uiRef}
-        />
+        <JournalContext.Provider value={journalModel}>
+          <UI
+            onGenerateRoute={handleGenerateRoute}
+            onRestoreStoredRoute={(nodes, progress) => {
+              galaxy.setRoutePointsFromNodes(nodes);
+              galaxy.setRouteProgress(progress);
+            }}
+            onRouteSelectionChange={(checkedIndex) => {
+              galaxy.setRouteProgress(checkedIndex);
+            }}
+            onSuggest={onSuggest}
+            onSelectTarget={handleSelectTarget}
+          />
+        </JournalContext.Provider>
       </RouteContext.Provider>
     </ToastProvider>,
     uiRoot,
   );
-
-  const storedFocusedSystem = loadStoredFocusedSystem();
-  if (storedFocusedSystem) {
-    focusSystem(storedFocusedSystem);
-  }
 
   // -----------------------------------------------------------------------
   // Star-click targeting
@@ -182,7 +174,7 @@ async function main() {
 
       const name = primaryModule.get_star_from_coords(x, y, z);
       if (name) {
-        focusSystem({ name, x, y, z });
+        focusedSystem.value = { name, coords: routeCoords };
         return;
       }
     }
@@ -202,8 +194,7 @@ async function main() {
     ) as { name: string; coords: { x: number; y: number; z: number } } | null;
 
     if (hit) {
-      const { name, coords } = hit;
-      focusSystem({ name, x: coords.x, y: coords.y, z: coords.z });
+      focusedSystem.value = hit;
     }
   });
 

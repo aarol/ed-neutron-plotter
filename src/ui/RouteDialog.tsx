@@ -3,65 +3,51 @@ import { SearchBox, type SearchBoxHandle } from "./SearchBox";
 import { Button } from "./components/Button";
 import type { RouteConfig } from "./types";
 import { uiTheme } from "./theme";
+import { effect } from "@preact/signals";
+import { showRouteDialog } from "./UI";
 
 interface RouteDialogProps {
-  isOpen: boolean;
-  initialFromValue?: string;
   initialToValue?: string;
-  initialSupercharged?: boolean;
-  onClose: () => void;
   onSubmit: (config: RouteConfig) => Promise<void> | void;
   onSuggest: (word: string) => string[];
 }
 
 export function RouteDialog({
-  initialFromValue = "",
-  initialSupercharged = false,
   initialToValue = "",
-  isOpen,
-  onClose,
   onSubmit,
   onSuggest,
 }: RouteDialogProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const fromRef = useRef<SearchBoxHandle>(null);
-  const [from, setFrom] = useState(initialFromValue);
+  const [from, setFrom] = useState("");
   const [to, setTo] = useState(initialToValue);
-  const [alreadySupercharged, setAlreadySupercharged] = useState(initialSupercharged);
+  const [alreadySupercharged, setAlreadySupercharged] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
+  const closeDialog = () => {
+    showRouteDialog.value = false;
+  };
 
-    setFrom(initialFromValue);
+  useEffect(() => {
     setTo(initialToValue);
-    setAlreadySupercharged(initialSupercharged);
-    window.setTimeout(() => {
-      fromRef.current?.focus();
-    }, 0);
-  }, [initialFromValue, initialSupercharged, initialToValue, isOpen]);
+  }, [initialToValue]);
 
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
+  effect(() => {
+    const dialog = dialogRef.current;
+    if (showRouteDialog.value) {
+      setFrom("");
+      setAlreadySupercharged(false);
+      setIsSubmitting(false);
+      if (!dialog?.open) {
+        dialog?.showModal();
       }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen, onClose]);
-
-  if (!isOpen) {
-    return null;
-  }
+      window.setTimeout(() => {
+        fromRef.current?.focus();
+      }, 0);
+    } else {
+      dialog?.close();
+    }
+  });
 
   const canGenerate = from.trim().length > 0 && to.trim().length > 0;
 
@@ -79,16 +65,21 @@ export function RouteDialog({
     setIsSubmitting(true);
     try {
       await onSubmit(config);
+      closeDialog();
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className={`${uiTheme.glassPanel} fixed left-1/2 top-1/2 z-999 w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 p-4`}>
+    <dialog
+      className={`${uiTheme.glassPanel} fixed left-1/2 top-1/2 z-999 m-0 w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 p-4`}
+      onClose={closeDialog}
+      ref={dialogRef}
+    >
       <div className={`${uiTheme.panelHeader} mb-3`}>
         <h2 className={uiTheme.panelTitle}>Plot route</h2>
-        <Button onClick={onClose} variant="icon">
+        <Button onClick={closeDialog} variant="icon">
           ×
         </Button>
       </div>
@@ -134,7 +125,7 @@ export function RouteDialog({
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button onClick={onClose} variant="secondary">
+        <Button onClick={closeDialog} variant="secondary">
           Cancel
         </Button>
         <Button
@@ -146,6 +137,6 @@ export function RouteDialog({
           Generate Route
         </Button>
       </div>
-    </div>
+    </dialog>
   );
 }
