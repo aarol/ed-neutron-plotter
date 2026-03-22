@@ -12,6 +12,8 @@ import { UI, type UIHandle } from "./ui/UI";
 import { loadStoredFocusedSystem, saveStoredFocusedSystem } from "./ui/focusStorage";
 import { ToastProvider } from "./ui/toast";
 import type { RouteConfig, RouteNode, TargetInfoState } from "./ui/types";
+import { RouteContext, RouteModel, type RouteState } from "./ui/state/routeModel";
+import { effect } from "@preact/signals";
 
 async function main() {
   await init();
@@ -102,26 +104,35 @@ async function main() {
 
   const uiRoot = document.createElement("div");
   document.body.appendChild(uiRoot);
+
+  const routeModel: RouteState = new RouteModel();
+
+  effect(() => {
+    const nodes = routeModel.nodes.value;
+    const progress = routeModel.progress.value;
+    galaxy.setRoutePointsFromNodes(nodes);
+    galaxy.setRouteProgress(progress);
+  })
+
   render(
     <ToastProvider>
-      <UI
-        onGenerateRoute={handleGenerateRoute}
-        onInitializeJournal={() => journal.init()}
-        onRestoreStoredRoute={(nodes, progress) => {
-          galaxy.setRoutePointsFromNodes(nodes);
-          galaxy.setRouteProgress(progress);
-        }}
-        onRouteSelectionChange={(checkedIndex) => {
-          galaxy.setRouteProgress(checkedIndex);
-        }}
-        onClearRoute={() => {
-          galaxy.clearRoute();
-        }}
-        onStopJournalTracking={() => journal.stopTracking()}
-        onSelectTarget={handleSelectTarget}
-        onSuggest={onSuggest}
-        ref={uiRef}
-      />
+      <RouteContext.Provider value={routeModel}>
+        <UI
+          onGenerateRoute={handleGenerateRoute}
+          onInitializeJournal={() => journal.init()}
+          onRestoreStoredRoute={(nodes, progress) => {
+            galaxy.setRoutePointsFromNodes(nodes);
+            galaxy.setRouteProgress(progress);
+          }}
+          onRouteSelectionChange={(checkedIndex) => {
+            galaxy.setRouteProgress(checkedIndex);
+          }}
+          onStopJournalTracking={() => journal.stopTracking()}
+          onSelectTarget={handleSelectTarget}
+          onSuggest={onSuggest}
+          ref={uiRef}
+        />
+      </RouteContext.Provider>
     </ToastProvider>,
     uiRoot,
   );

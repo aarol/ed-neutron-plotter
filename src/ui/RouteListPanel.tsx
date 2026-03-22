@@ -1,25 +1,19 @@
 import { Button } from "./components/Button";
-import type { RouteNode } from "./types";
 import { uiTheme } from "./theme";
+import { useContext } from "preact/hooks";
+import { RouteContext } from "./state/routeModel";
+import { For } from "@preact/signals/utils";
 
-interface RouteListPanelProps {
-  nodes: RouteNode[];
-  visible: boolean;
-  currentProgress: number;
-  onClose: () => void;
-  onSetProgress: (nextProgress: number) => void;
-}
 
-export function RouteListPanel({ currentProgress, nodes, onClose, onSetProgress, visible }: RouteListPanelProps) {
-  if (!visible || nodes.length === 0) {
-    return null;
-  }
+export function RouteListPanel() {
+
+  const { nodes, progress, setProgress, clearRoute } = useContext(RouteContext)!
 
   return (
     <div className={`${uiTheme.glassPanel} fixed left-5 top-20 z-998 min-w-70 max-w-[calc(100vw-40px)] w-[min(380px,calc(100vw-40px))] min-h-55 h-[min(60vh,520px)] max-h-[80vh] resize overflow-hidden p-0`}>
       <div className="flex items-center justify-between border-b border-white/15 px-4 py-3">
         <h3 className="m-0 text-sm font-semibold tracking-[0.03em] text-white/90">Plotted Route</h3>
-        <Button aria-label="Close plotted route" className="h-7 w-7 rounded" onClick={onClose} variant="icon">
+        <Button aria-label="Close plotted route" className="h-7 w-7 rounded" onClick={clearRoute} variant="icon">
           x
         </Button>
       </div>
@@ -33,30 +27,32 @@ export function RouteListPanel({ currentProgress, nodes, onClose, onSetProgress,
             </tr>
           </thead>
           <tbody>
-            {nodes.map((node, index) => {
-              const checkboxId = `route-node-${index}`;
+            <For each={nodes}>
+              {(node, index) => {
+                const checkboxId = `route-node-${index}`;
 
-              return (
-                <tr className="border-b border-white/8 last:border-b-0" key={`${node.name}-${index}`}>
-                  <td className="px-3 py-2">
-                    <input
-                      checked={index < currentProgress}
-                      className="h-3.5 w-3.5 cursor-pointer border border-white/35 bg-black/30 accent-space-accent-strong"
-                      id={checkboxId}
-                      onInput={(event) => {
-                        const nextChecked = (event.currentTarget as HTMLInputElement).checked;
-                        const nextIndex = nextChecked ? index+1 : index;
-                        onSetProgress(nextIndex);
-                      }}
-                      type="checkbox"
-                    />
-                  </td>
-                  <td className="px-3 py-2 font-medium text-white/90">
-                    <label className="cursor-pointer" htmlFor={checkboxId}>{node.name}</label>
-                  </td>
-                </tr>
-              );
-            })}
+                return (
+                  <tr className="border-b border-white/8 last:border-b-0" key={`${node.name}-${index}`}>
+                    <td className="px-3 py-2">
+                      <input
+                        checked={index < progress.value}
+                        className="h-3.5 w-3.5 cursor-pointer border border-white/35 bg-black/30 accent-space-accent-strong"
+                        id={checkboxId}
+                        onInput={(event) => {
+                          const nextChecked = (event.currentTarget as HTMLInputElement).checked;
+                          const nextIndex = nextChecked ? index + 1 : index;
+                          setProgress(nextIndex);
+                        }}
+                        type="checkbox"
+                      />
+                    </td>
+                    <td className="px-3 py-2 font-medium text-white/90">
+                      <label className="cursor-pointer" htmlFor={checkboxId}>{node.name}</label>
+                    </td>
+                  </tr>
+                )
+              }}
+            </For>
           </tbody>
         </table>
       </div>

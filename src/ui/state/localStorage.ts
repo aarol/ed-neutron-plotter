@@ -1,27 +1,17 @@
 import { z } from "zod";
 
-const routeNodeSchema = z.object({
-  name: z.string(),
-  coords: z.object({
-    x: z.number(),
-    y: z.number(),
-    z: z.number(),
-  }),
-});
 
-const storedRoutePlotSchema = z
-  .object({
-    nodes: z.array(routeNodeSchema),
-    progress: z.number().int().min(0),
-  })
-  .superRefine((value, context) => {
-    if (value.progress > value.nodes.length) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "progress must be less than or equal to route length",
-      });
-    }
-  });
+const storedRoutePlotSchema = z.object({
+  nodes: z.array(z.object({
+    name: z.string(),
+    coords: z.object({
+      x: z.number(),
+      y: z.number(),
+      z: z.number(),
+    }),
+  })),
+  progress: z.number().int().min(0),
+});
 
 export type StoredRoutePlot = z.infer<typeof storedRoutePlotSchema>;
 

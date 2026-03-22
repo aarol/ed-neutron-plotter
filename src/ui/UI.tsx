@@ -1,20 +1,21 @@
 import { forwardRef } from "preact/compat";
-import { useEffect, useImperativeHandle, useState } from "preact/hooks";
+import { useContext, useImperativeHandle, useState } from "preact/hooks";
 import { JournalDialog } from "./JournalDialog";
 import { RouteListPanel } from "./RouteListPanel";
 import { RouteDialog } from "./RouteDialog";
 import { SearchBar } from "./SearchBar";
 import type { SearchSubmitOptions } from "./SearchBox";
 import { TargetInfo } from "./TargetInfo";
-import { clearStoredRoutePlot, loadStoredRoutePlot, saveStoredRoutePlot } from "./routeStorage";
 import { useToast } from "./toast";
 import type { RouteConfig, RouteNode, TargetInfoState } from "./types";
+import { RouteContext } from "./state/routeModel";
+import { Show } from "@preact/signals/utils";
+import { computed } from "@preact/signals";
 
 export interface UIProps {
   onGenerateRoute: (config: RouteConfig) => Promise<RouteNode[]>;
   onRouteSelectionChange: (index: number) => void;
   onRestoreStoredRoute: (nodes: RouteNode[], progress: number) => void;
-  onClearRoute: () => void;
   onInitializeJournal: () => Promise<void>;
   onStopJournalTracking: () => void;
   onSelectTarget: (query: string) => Promise<TargetInfoState | null>;
@@ -27,16 +28,16 @@ export interface UIHandle {
 }
 
 export const UI = forwardRef<UIHandle, UIProps>(function UI(
-  { onClearRoute, onGenerateRoute, onInitializeJournal, onRestoreStoredRoute, onRouteSelectionChange, onSelectTarget, onStopJournalTracking, onSuggest },
+  { onGenerateRoute, onInitializeJournal, onSelectTarget, onStopJournalTracking, onSuggest },
   ref,
 ) {
   const { showError } = useToast();
   const [target, setTarget] = useState<TargetInfoState>({ name: "Sol", x: 0, y: 0, z: 0 });
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [isJournalTracking, setIsJournalTracking] = useState(false);
-  const [isRouteListPanelVisible, setIsRouteListPanelVisible] = useState(false);
-  const [routeNodes, setRouteNodes] = useState<RouteNode[]>([]);
-  const [routeProgress, setRouteProgress] = useState<number>(0);
+  const routeState = useContext(RouteContext)!;
+  const showRouteListPanel = computed(() => routeState.nodes.value.length > 0);
+
   const [routeDialogState, setRouteDialogState] = useState({
     isOpen: false,
     fromValue: "",
@@ -45,7 +46,6 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
   });
 
   const openRouteDialog = (word: string) => {
-    setIsRouteListPanelVisible(false);
     setRouteDialogState((currentState) => ({
       ...currentState,
       isOpen: true,
@@ -81,29 +81,10 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
     }
   };
 
-  useEffect(() => {
-    const storedRoute = loadStoredRoutePlot();
-    if (!storedRoute || storedRoute.nodes.length === 0) {
-      return;
-    }
-
-    setRouteNodes(storedRoute.nodes);
-    setRouteProgress(storedRoute.progress);
-    setIsRouteListPanelVisible(true);
-    onRestoreStoredRoute(storedRoute.nodes, storedRoute.progress);
-  }, [onRestoreStoredRoute]);
-
   const handleGenerateRoute = async (config: RouteConfig) => {
     try {
       const nextRouteNodes = await onGenerateRoute(config);
-
-      if (nextRouteNodes.length > 0) {
-        setRouteNodes(nextRouteNodes);
-        setRouteProgress(0);
-        saveStoredRoutePlot({ nodes: nextRouteNodes, progress: 0 });
-        onRouteSelectionChange(0);
-        setIsRouteListPanelVisible(true);
-      }
+      routeState.setRoute(nextRouteNodes);
     } catch (error) {
       showError(error instanceof Error ? error.message : "Failed to generate route.");
     }
@@ -139,24 +120,10 @@ export const UI = forwardRef<UIHandle, UIProps>(function UI(
 
       <TargetInfo isRoutePanelOpen={routeDialogState.isOpen} onOpenRoute={openRouteDialog} target={target} />
 
-      <RouteListPanel
-        currentProgress={routeProgress}
-        nodes={routeNodes}
-        onClose={() => {
-          setIsRouteListPanelVisible(false);
-          setRouteNodes([]);
-          setRouteProgress(0);
-          clearStoredRoutePlot();
-          onClearRoute();
-        }}
-        onSetProgress={(nextCheckedByIndex) => {
-          setRouteProgress(nextCheckedByIndex);
-          saveStoredRoutePlot({ nodes: routeNodes, progress: nextCheckedByIndex });
-          onRouteSelectionChange(nextCheckedByIndex);
-        }}
-        visible={isRouteListPanelVisible}
-      />
- 
+      <Show when={showRouteListPanel}>
+        <RouteListPanel />
+      </Show>
+
       <RouteDialog
         initialFromValue={routeDialogState.fromValue}
         initialSupercharged={routeDialogState.alreadySupercharged}
