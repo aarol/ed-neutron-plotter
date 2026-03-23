@@ -1,32 +1,41 @@
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import { color, float, uniform, vec4 } from 'three/tsl';
-import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Scene, SphereGeometry, SpriteNodeMaterial, Vector3, WebGPURenderer } from 'three/webgpu';
+import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Raycaster, Scene, SphereGeometry, SpriteNodeMaterial, Vector2, Vector3, WebGPURenderer } from 'three/webgpu';
 import { LinePoints } from './line-points';
 import type { StarSystem } from './ui/types';
+import type { Module } from '../rust-module/pkg/rust_module';
 
 
 export class Galaxy {
-  camera = new PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200)
-  scene = new Scene();
+  private camera = new PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200)
+  private scene = new Scene();
   // Draws the route lines on top of the stars
   // because the stars are drawn with additive blending
-  overlayScene = new Scene();
-  renderer = new WebGPURenderer({
+  private overlayScene = new Scene();
+  private renderer = new WebGPURenderer({
     antialias: true,
     depth: false,
   })
 
-  controls = new OrbitControls(this.camera, this.renderer.domElement)
+  private wasmModule?: Module;
+  onSystemFocus?: (system: StarSystem) => void;
+
+  private controls = new OrbitControls(this.camera, this.renderer.domElement)
   targetPosition = new Vector3(0, 0, 0)
   currentPosition = this.targetPosition.clone()
-  routeLine = new LinePoints(256, 0xffffff, 0.003);
+  private routeLine = new LinePoints(256, 0xffffff, 0.003);
+
+  private raycaster = new Raycaster();
+  private pointerDownPos = new Vector2();
+  private isDragging = false;
 
   focusSphere!: Mesh
 
   stats = new Stats()
 
-  async init() {
+  async init(primaryModule: Module) {
+    this.wasmModule = primaryModule;
     this.camera.position.set(34.65699659876029, 21.90527423256544, -24.079356892645272);
 
     this.renderer.setPixelRatio(window.devicePixelRatio);
@@ -67,6 +76,8 @@ export class Galaxy {
     this.focusSphere = this.createFocusSphere()
     this.overlayScene.add(this.focusSphere)
     this.overlayScene.add(this.routeLine)
+
+    this.initializeMouseEvents();
   }
 
   createFocusSphere() {
@@ -106,6 +117,12 @@ export class Galaxy {
   setRouteProgress(index: number) {
     this.routeLine.setProgress(index);
     this.requestRenderIfNotRequested();
+  }
+
+  private initializeMouseEvents() {
+    this.renderer.domElement.addEventListener('pointerdown', this.onPointerDown);
+    this.renderer.domElement.addEventListener('pointermove', this.onPointerMove);
+    this.renderer.domElement.addEventListener('pointerup', this.onPointerUp);
   }
 
   clearRoute() {
@@ -186,6 +203,54 @@ export class Galaxy {
       mesh.frustumCulled = false
       this.scene.add(mesh);
       this.requestRenderIfNotRequested()
+    }
+  }
+
+
+  private onPointerDown = (e: PointerEvent) => {
+    this.pointerDownPos.set(e.clientX, e.clientY);
+    this.isDragging = false;
+  };
+
+  private onPointerMove = (e: PointerEvent) => {
+    if (e.buttons === 0) return;
+    const dx = e.clientX - this.pointerDownPos.x;
+    const dy = e.clientY - this.pointerDownPos.y;
+    if (dx * dx + dy * dy > 25) this.isDragging = true;
+  };
+
+  private onPointerUp = (e: PointerEvent) => {
+    if (this.isDragging) return;
+
+    const ndc = new Vector2(
+      (e.clientX / window.innerWidth) * 2 - 1,
+      -(e.clientY / window.innerHeight) * 2 + 1,
+    );
+
+    this.raycaster.setFromCamera(ndc, this.camera);
+
+    const routeCoords = this.routeLine.getHitSpriteCoords(this.raycaster);
+    if (routeCoords) {
+      const { x, y, z } = routeCoords;
+      const name = this.wasmModule?.get_star_from_coords(x, y, z);
+      if (name) {
+        this.onSystemFocus?.({ name, coords: routeCoords });
+        return;
+      }
+    }
+
+    const fovRad = this.camera.fov * (Math.PI / 180);
+    const angularTolerance = (fovRad / window.innerHeight) * 8;
+    const { origin, direction } = this.raycaster.ray;
+
+    const hit = this.wasmModule?.find_star_near_ray(
+      origin.x, origin.y, origin.z,
+      direction.x, direction.y, direction.z,
+      angularTolerance,
+    ) as StarSystem | null;
+
+    if (hit) {
+      this.onSystemFocus?.(hit);
     }
   }
 }

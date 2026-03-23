@@ -1,7 +1,7 @@
 import "./style.css";
 import { Galaxy } from "./galaxy";
 import init, { Module } from "../rust-module/pkg/rust_module";
-import { Raycaster, Vector2, Vector3 } from "three/webgpu";
+import { Vector3 } from "three/webgpu";
 import { api } from "./api";
 import * as Comlink from "comlink";
 import { WasmWorker as WasmWorkerAPI } from "./web-worker";
@@ -17,11 +17,11 @@ import { saveStoredFocusedSystem } from "./ui/state/localStorage";
 
 async function main() {
   await init();
-  const galaxy = new Galaxy();
-  await galaxy.init();
 
   // Wasm on the main thread for fast search, coordinate queries
   const primaryModule = new Module();
+  const galaxy = new Galaxy();
+  await galaxy.init(primaryModule);
 
   // WASM pathfinding in a web worker
   const WasmWorker = Comlink.wrap<WasmWorkerAPI>(new Worker());
@@ -29,7 +29,7 @@ async function main() {
   // @ts-ignore
   const wasmWorker: Comlink.Remote<WasmWorkerAPI> = await new WasmWorker();
 
-  function onSuggest(prefix: string) {
+  function autocompleteSearchWord(prefix: string) {
     if (primaryModule) {
       console.time("trie-suggest");
       const trieResults = primaryModule.suggest_words(prefix, 10);
@@ -78,7 +78,12 @@ async function main() {
     return [];
   };
 
+  galaxy.onSystemFocus = (system: StarSystem) => {
+    focusedSystem.value = system;
+  }
+
   effect(() => {
+    // This will run any time focusedSystem changes
     const system = focusedSystem.value;
     if (system) {
       const { x, y, z } = system.coords;
@@ -118,14 +123,7 @@ async function main() {
         <JournalContext.Provider value={journalModel}>
           <UI
             onGenerateRoute={handleGenerateRoute}
-            onRestoreStoredRoute={(nodes, progress) => {
-              galaxy.setRoutePointsFromNodes(nodes);
-              galaxy.setRouteProgress(progress);
-            }}
-            onRouteSelectionChange={(checkedIndex) => {
-              galaxy.setRouteProgress(checkedIndex);
-            }}
-            onSuggest={onSuggest}
+            autocomplete={autocompleteSearchWord}
             onSelectTarget={handleSelectTarget}
           />
         </JournalContext.Provider>
@@ -133,70 +131,6 @@ async function main() {
     </ToastProvider>,
     uiRoot,
   );
-
-  // -----------------------------------------------------------------------
-  // Star-click targeting
-  // Cast a ray from the camera through the clicked pixel; project it to the
-  // orbit-controls target depth and ask WASM for the nearest star.
-  // A small drag-distance threshold avoids false positives while orbiting.
-  // -----------------------------------------------------------------------
-  const raycaster = new Raycaster();
-  let pointerDownPos = new Vector2();
-  let isDragging = false;
-
-  galaxy.renderer.domElement.addEventListener('pointerdown', (e: PointerEvent) => {
-    pointerDownPos.set(e.clientX, e.clientY);
-    isDragging = false;
-  });
-
-  galaxy.renderer.domElement.addEventListener('pointermove', (e: PointerEvent) => {
-    if (e.buttons === 0) return;
-    const dx = e.clientX - pointerDownPos.x;
-    const dy = e.clientY - pointerDownPos.y;
-    if (dx * dx + dy * dy > 25) isDragging = true; // 5 px threshold
-  });
-
-  galaxy.renderer.domElement.addEventListener('pointerup', (e: PointerEvent) => {
-    if (isDragging) return;
-
-    // Convert to Normalised Device Coordinates [-1, 1]
-    const ndc = new Vector2(
-      (e.clientX / window.innerWidth) * 2 - 1,
-      -(e.clientY / window.innerHeight) * 2 + 1,
-    );
-
-    raycaster.setFromCamera(ndc, galaxy.camera);
-
-    // If the route line was clicked, target that point instead of some other nearby star
-    const routeCoords = galaxy.routeLine.getHitSpriteCoords(raycaster);
-    if (routeCoords) {
-      const { x, y, z } = routeCoords;
-
-      const name = primaryModule.get_star_from_coords(x, y, z);
-      if (name) {
-        focusedSystem.value = { name, coords: routeCoords };
-        return;
-      }
-    }
-
-    // Compute angular pick tolerance: ~8 px in screen space
-    // camera.fov is vertical (degrees); convert to radians per pixel
-    const fovRad = galaxy.camera.fov * (Math.PI / 180);
-    const angularTolerance = (fovRad / window.innerHeight) * 8;
-
-    const { origin, direction } = raycaster.ray;
-
-    // WASM returns { name, coords: { x, y, z } } or null
-    const hit = primaryModule.find_star_near_ray(
-      origin.x, origin.y, origin.z,
-      direction.x, direction.y, direction.z,
-      angularTolerance,
-    ) as { name: string; coords: { x: number; y: number; z: number } } | null;
-
-    if (hit) {
-      focusedSystem.value = hit;
-    }
-  });
 
   fetch(`${import.meta.env.BASE_URL}data/neutron_stars0.bin`)
     .then((res) => res.arrayBuffer())

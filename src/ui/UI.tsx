@@ -9,16 +9,14 @@ import { useToast } from "./toast";
 import type { RouteConfig, StarSystem } from "./types";
 import { RouteContext } from "./state/routeModel";
 import { Show } from "@preact/signals/utils";
-import { computed, signal } from "@preact/signals";
+import { signal } from "@preact/signals";
 import { JournalContext } from "./state/journalModel";
 import { loadStoredFocusedSystem } from "./state/localStorage";
 
 export interface UIProps {
   onGenerateRoute: (config: RouteConfig) => Promise<StarSystem[]>;
-  onRouteSelectionChange: (index: number) => void;
-  onRestoreStoredRoute: (nodes: StarSystem[], progress: number) => void;
   onSelectTarget: (query: string) => Promise<StarSystem | null>;
-  onSuggest: (word: string) => string[];
+  autocomplete: (word: string) => string[];
 }
 
 export const showJournalDialog = signal(false);
@@ -26,11 +24,10 @@ export const showRouteDialog = signal(false);
 
 export const focusedSystem = signal<StarSystem>(loadStoredFocusedSystem() ?? { name: "Sol", coords: { x: 0, y: 0, z: 0 } });
 
-export function UI({ onGenerateRoute, onSelectTarget, onSuggest }: UIProps) {
+export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
   const { showError } = useToast();
   const journalState = useContext(JournalContext)!;
   const routeState = useContext(RouteContext)!;
-  const showRouteListPanel = computed(() => routeState.nodes.value.length > 0);
   const [routeDialogToValue, setRouteDialogToValue] = useState("");
 
   const openRouteDialog = (word: string) => {
@@ -78,19 +75,19 @@ export function UI({ onGenerateRoute, onSelectTarget, onSuggest }: UIProps) {
         onSearch={(query, options) => {
           void handleSearch(query, options);
         }}
-        onSuggest={onSuggest}
+        onSuggest={autocomplete}
       />
 
       <TargetInfo isRoutePanelOpen={showRouteDialog.value} onOpenRoute={openRouteDialog} />
 
-      <Show when={showRouteListPanel}>
+      <Show when={() => routeState.nodes.value.length > 0}>
         <RouteListPanel />
       </Show>
 
       <RouteDialog
         initialToValue={routeDialogToValue}
         onSubmit={handleGenerateRoute}
-        onSuggest={onSuggest}
+        onSuggest={autocomplete}
       />
 
       <JournalDialog />
