@@ -101,14 +101,14 @@ export class Galaxy {
     this.routeLine.update(points);
     this.requestRenderIfNotRequested()
   }
-
-  setRoutePointsFromNodes(nodes: StarSystem[]) {
+  
+  setRoutePointsFromCoords(coords: StarSystem["coords"][]) {
     // Convert nodes to Float32Array format
-    const points = new Float32Array(nodes.length * 3);
-    nodes.forEach((node, i) => {
-      points[i * 3] = node.coords.x;
-      points[i * 3 + 1] = node.coords.y;
-      points[i * 3 + 2] = node.coords.z;
+    const points = new Float32Array(coords.length * 3);
+    coords.forEach((coord, i) => {
+      points[i * 3] = coord.x;
+      points[i * 3 + 1] = coord.y;
+      points[i * 3 + 2] = coord.z;
     });
     this.routeLine.update(points);
     this.requestRenderIfNotRequested()

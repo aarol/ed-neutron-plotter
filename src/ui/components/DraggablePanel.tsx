@@ -1,4 +1,4 @@
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 
 export type PanelPosition = {
@@ -27,7 +27,7 @@ export function DraggablePanel({
   const [isDragging, setIsDragging] = useState(false);
 
   const handlePointerDown = (event: PointerEvent) => {
-    if (event.button !== 0) {
+    if (event.pointerType === "mouse" && event.button !== 0) {
       return;
     }
 
@@ -47,45 +47,58 @@ export function DraggablePanel({
       offsetX: event.clientX - rect.left,
       offsetY: event.clientY - rect.top,
     };
-
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     setIsDragging(true);
   };
 
-  const handlePointerMove = (event: PointerEvent) => {
-    const dragState = dragStateRef.current;
-    const panel = panelRef.current;
-    if (!dragState || !panel || dragState.pointerId !== event.pointerId) {
+  useEffect(() => {
+    if (!isDragging) {
       return;
     }
 
-    const panelWidth = panel.offsetWidth;
-    const panelHeight = panel.offsetHeight;
+    const handlePointerMove = (event: PointerEvent) => {
+      const dragState = dragStateRef.current;
+      const panel = panelRef.current;
+      if (!dragState || !panel || dragState.pointerId !== event.pointerId) {
+        return;
+      }
 
-    const nextX = Math.min(
-      Math.max(0, event.clientX - dragState.offsetX),
-      Math.max(0, window.innerWidth - panelWidth),
-    );
-    const nextY = Math.min(
-      Math.max(0, event.clientY - dragState.offsetY),
-      Math.max(0, window.innerHeight - panelHeight),
-    );
+      const panelWidth = panel.offsetWidth;
+      const panelHeight = panel.offsetHeight;
 
-    const nextPosition = { x: nextX, y: nextY };
-    setPosition(nextPosition);
-    onPositionChange?.(nextPosition);
-  };
+      const nextX = Math.min(
+        Math.max(0, event.clientX - dragState.offsetX),
+        Math.max(0, window.innerWidth - panelWidth),
+      );
+      const nextY = Math.min(
+        Math.max(0, event.clientY - dragState.offsetY),
+        Math.max(0, window.innerHeight - panelHeight),
+      );
 
-  const handlePointerUp = (event: PointerEvent) => {
-    const dragState = dragStateRef.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) {
-      return;
-    }
+      const nextPosition = { x: nextX, y: nextY };
+      setPosition(nextPosition);
+      onPositionChange?.(nextPosition);
+    };
 
-    dragStateRef.current = null;
-    (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
-    setIsDragging(false);
-  };
+    const handlePointerStop = (event: PointerEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) {
+        return;
+      }
+
+      dragStateRef.current = null;
+      setIsDragging(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerStop);
+    window.addEventListener("pointercancel", handlePointerStop);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerStop);
+      window.removeEventListener("pointercancel", handlePointerStop);
+    };
+  }, [isDragging, onPositionChange]);
 
   return (
     <div
@@ -93,8 +106,6 @@ export function DraggablePanel({
       ref={panelRef}
       style={{ left: `${position.x}px`, top: `${position.y}px` }}
       onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
     >
       {children({ isDragging })}
     </div>

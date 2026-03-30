@@ -1,4 +1,4 @@
-import { useContext, useRef, useState } from "preact/hooks";
+import { useContext, useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "./components/Button";
 import { uiTheme } from "./theme";
 import { useToast } from "./toast";
@@ -19,14 +19,20 @@ export function JournalDialog({ }: JournalDialogProps) {
 
   const journalState = useContext(JournalContext)!;
 
-  effect(() => {
-    const dialog = dialogRef.current;
-    if (showJournalDialog.value) {
-      if (!dialog?.open) dialog?.showModal();
-    } else {
-      dialog?.close();
-    }
-  })
+  useEffect(() => {
+    const dispose = effect(() => {
+      const dialog = dialogRef.current;
+      if (showJournalDialog.value) {
+        if (!dialog?.open) dialog?.showModal();
+      } else {
+        dialog?.close();
+      }
+    });
+
+    return () => {
+      dispose();
+    };
+  }, []);
 
   const closeDialog = () => showJournalDialog.value = false;
 

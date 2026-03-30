@@ -12,6 +12,8 @@ import { Show } from "@preact/signals/utils";
 import { signal } from "@preact/signals";
 import { JournalContext } from "./state/journalModel";
 import { loadStoredFocusedSystem } from "./state/localStorage";
+import { HamburgerMenu } from "./HamburgerMenu";
+import { ImportSpanshDialog } from "./ImportSpanshDialog";
 
 export interface UIProps {
   onGenerateRoute: (config: RouteConfig) => Promise<StarSystem[]>;
@@ -21,6 +23,7 @@ export interface UIProps {
 
 export const showJournalDialog = signal(false);
 export const showRouteDialog = signal(false);
+export const showImportSpanshDialog = signal(false);
 
 export const focusedSystem = signal<StarSystem>(loadStoredFocusedSystem() ?? { name: "Sol", coords: { x: 0, y: 0, z: 0 } });
 
@@ -31,6 +34,7 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
   const [routeDialogToValue, setRouteDialogToValue] = useState("");
 
   const openRouteDialog = (word: string) => {
+    console.log("Opening route dialog with initial to value:", word);
     setRouteDialogToValue(word);
     showRouteDialog.value = true;
   };
@@ -53,9 +57,15 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
   };
 
   const handleGenerateRoute = async (config: RouteConfig) => {
+    showRouteDialog.value = false;
     try {
       const nextRouteNodes = await onGenerateRoute(config);
-      routeState.setRoute(nextRouteNodes);
+      routeState.setRoute(nextRouteNodes.map(system => ({
+        system,
+        distance: 0, // Placeholder, you can calculate actual distances if needed
+        refuel: false, // Placeholder, you can determine refuel points if needed
+        isNeutron: false, // Placeholder, you can determine neutron points if needed
+      })));
     } catch (error) {
       showError(error instanceof Error ? error.message : "Failed to generate route.");
     }
@@ -78,9 +88,13 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
         onSuggest={autocomplete}
       />
 
+      <HamburgerMenu onImportRouteFromSpansh={() => {
+        showImportSpanshDialog.value = true;
+      }} />
+
       <TargetInfo isRoutePanelOpen={showRouteDialog.value} onOpenRoute={openRouteDialog} />
 
-      <Show when={() => routeState.nodes.value.length > 0}>
+      <Show when={() =>routeState.nodes.value.length > 0}>
         <RouteListPanel />
       </Show>
 
@@ -89,6 +103,8 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
         onSubmit={handleGenerateRoute}
         onSuggest={autocomplete}
       />
+
+      <ImportSpanshDialog />
 
       <JournalDialog />
     </>

@@ -11,7 +11,7 @@ export function RouteListPanel() {
 
   return (
     <DraggablePanel
-      className={`${uiTheme.glassPanel} fixed z-998 min-w-90 max-w-[calc(100vw-40px)] w-[min(380px,calc(100vw-40px))] min-h-55 h-[min(60vh,520px)] max-h-[80vh] resize overflow-hidden p-0`}
+      className={`${uiTheme.glassPanel} fixed z-998 min-w-100 max-w-[calc(100vw-40px)] w-[min(380px,calc(100vw-40px))] min-h-60 h-[min(60vh,520px)] max-h-[80vh] resize overflow-hidden p-0`}
       initialPosition={{ x: 20, y: 80 }}
     >
       {({ isDragging }) => (

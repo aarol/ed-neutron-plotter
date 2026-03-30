@@ -1,5 +1,6 @@
 import { Vector3 } from "three";
 import * as wasm from "../rust-module/pkg";
+import type { StarSystem } from "./ui/types";
 
 export type SystemInfoResponse = {
   name: string
@@ -44,6 +45,41 @@ async function getStarCoordsFromApi(star: string): Promise<ApiCoords | null> {
   }
 }
 
+async function getMultipleStarCoordsFromApi(stars: string[]): Promise<Record<string, ApiCoords>> {
+  const apiUrl = "https://www.edsm.net/api-v1/systems"
+
+  const url = `${apiUrl}?${encodeSystemNamesForApi(stars)}&showCoordinates=1`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Error fetching star coordinates: ${response.statusText}`);
+  }
+  const data = await response.json() as StarSystem[];
+  
+  const map = data.reduce((acc, system) => {
+    acc[system.name] = {
+      x: -system.coords.x / 1000,
+      y: system.coords.y / 1000,
+      z: system.coords.z / 1000,
+    };
+    return acc;
+  }, {} as Record<string, ApiCoords>);
+
+  for(const star of stars) {
+    if (!map[star]) {
+      console.log(`Star not found in API response: ${star}. Encoded URL: ${encodeURI(star)}`);
+    }
+  }
+
+
+  return map;
+}
+
+function encodeSystemNamesForApi(stars: string[]): string {
+  return stars.map(star => `systemName[]=${encodeURIComponent(star)}`).join("&");
+}
+
 export const api = {
   getStarCoords,
+  getMultipleStarCoordsFromApi,
 }

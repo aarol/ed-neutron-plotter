@@ -32,22 +32,25 @@ export function RouteDialog({
     setTo(initialToValue);
   }, [initialToValue]);
 
-  effect(() => {
-    const dialog = dialogRef.current;
-    if (showRouteDialog.value) {
-      setFrom("");
-      setAlreadySupercharged(false);
-      setIsSubmitting(false);
-      if (!dialog?.open) {
-        dialog?.showModal();
+  useEffect(() => {
+    const dispose = effect(() => {
+      const dialog = dialogRef.current;
+      if (showRouteDialog.value) {
+        setFrom("");
+        setAlreadySupercharged(false);
+        setIsSubmitting(false);
+        if (!dialog?.open) {
+          dialog?.showModal();
+        }
+      } else {
+        dialog?.close();
       }
-      window.setTimeout(() => {
-        fromRef.current?.focus();
-      }, 0);
-    } else {
-      dialog?.close();
-    }
-  });
+    });
+
+    return () => {
+      dispose();
+    };
+  }, []);
 
   const canGenerate = from.trim().length > 0 && to.trim().length > 0;
 

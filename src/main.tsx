@@ -71,7 +71,7 @@ async function main() {
 
     const res = await wasmWorker.findRoute(start, end, Comlink.proxy(routeReportCallback));
     if (res) {
-      galaxy.setRoutePointsFromNodes(res);
+      galaxy.setRoutePointsFromCoords(res.map(system => system.coords));
       return res as StarSystem[];
     }
 
@@ -108,9 +108,9 @@ async function main() {
   const routeModel: RouteState = new RouteModel();
 
   effect(() => {
-    const nodes = routeModel.nodes.value;
     const progress = routeModel.progress.value;
-    galaxy.setRoutePointsFromNodes(nodes);
+    const routePoints = routeModel.nodes.value.map(node => node.system.coords);
+    galaxy.setRoutePointsFromCoords(routePoints);
     galaxy.setRouteProgress(progress);
   })
 
@@ -163,17 +163,6 @@ async function main() {
       console.log("Star KDTree loaded.");
       await wasmWorker.setKDTree(new Uint8Array(sab));
     });
-
-  window.addEventListener("paste", (event) => {
-    console.log(event.clipboardData?.types)
-    const htmlData = event.clipboardData?.getData("text/html")
-    if (htmlData) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlData, "text/html");
-      const table = doc.querySelector("table");
-      console.log(table)
-    }
-  })
 }
 
 main();

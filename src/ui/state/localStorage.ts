@@ -9,8 +9,16 @@ const starSystemSchema = z.object({
   }),
 });
 
+const routeNodeSchema = z.object({
+  system: starSystemSchema,
+  distance: z.number(),
+  refuel: z.boolean(),
+  isNeutron: z.boolean(),
+});
+
+
 const storedRoutePlotSchema = z.object({
-  nodes: z.array(starSystemSchema),
+  nodes: z.array(routeNodeSchema),
   progress: z.number().int().min(0),
 });
 
