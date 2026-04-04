@@ -98,7 +98,7 @@ export class Journal {
       this.onNewLocation({
         name: event.StarSystem,
         coords: {
-          x: event.StarPos[0] / 1000.0,
+          x: -event.StarPos[0] / 1000.0,
           y: event.StarPos[1] / 1000.0,
           z: event.StarPos[2] / 1000.0,
         }

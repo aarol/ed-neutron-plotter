@@ -100,8 +100,18 @@ async function main() {
     const lastSystem = journalModel.lastSystem.value;
     if (lastSystem) {
       console.log(`New location from journal: ${lastSystem.name} at (${lastSystem.coords.x}, ${lastSystem.coords.y}, ${lastSystem.coords.z})`);
-
+      galaxy.setLiveLocation(new Vector3(lastSystem.coords.x, lastSystem.coords.y, lastSystem.coords.z));
       focusedSystem.value = lastSystem;
+      return;
+    }
+
+    galaxy.setLiveLocation(null);
+  });
+
+  effect(() => {
+    if (!journalModel.enabled.value) {
+      console.log("Journal tracking disabled, clearing live location.");
+      galaxy.setLiveLocation(null);
     }
   });
 

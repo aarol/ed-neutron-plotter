@@ -1,7 +1,7 @@
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
-import { color, float, uniform, vec4 } from 'three/tsl';
-import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Raycaster, Scene, SphereGeometry, SpriteNodeMaterial, Vector2, Vector3, WebGPURenderer } from 'three/webgpu';
+import { color, float, shapeCircle, uniform, vec4 } from 'three/tsl';
+import { AdditiveBlending, BufferAttribute, BufferGeometry, CubeTextureLoader, Mesh, PerspectiveCamera, Points, PointsNodeMaterial, Raycaster, Scene, SphereGeometry, Sprite, SpriteNodeMaterial, Vector2, Vector3, WebGPURenderer } from 'three/webgpu';
 import { LinePoints } from './line-points';
 import type { StarSystem } from './ui/types';
 import type { Module } from '../rust-module/pkg/rust_module';
@@ -29,8 +29,13 @@ export class Galaxy {
   private raycaster = new Raycaster();
   private pointerDownPos = new Vector2();
   private isDragging = false;
+  private livePulseMinSize = 0.003;
+  private livePulseMaxSize = 0.014;
+  private livePulseDurationMs = 1400;
 
   focusSphere!: Mesh
+  liveLocationSprite!: Sprite
+  liveLocationMaterial!: SpriteNodeMaterial
 
   stats = new Stats()
 
@@ -74,7 +79,9 @@ export class Galaxy {
     this.scene.background = texture;
 
     this.focusSphere = this.createFocusSphere()
+    this.liveLocationSprite = this.createLiveLocationSprite()
     this.overlayScene.add(this.focusSphere)
+    this.overlayScene.add(this.liveLocationSprite)
     this.overlayScene.add(this.routeLine)
 
     this.initializeMouseEvents();
@@ -91,9 +98,38 @@ export class Galaxy {
     return sphere
   }
 
+  createLiveLocationSprite() {
+    this.liveLocationMaterial = new SpriteNodeMaterial({
+      colorNode: vec4(uniform(color('#38bdf8')), float(1.0)),
+      maskNode: shapeCircle(),
+      sizeAttenuation: false,
+      transparent: true,
+      depthWrite: false,
+    })
+    const sprite = new Sprite(this.liveLocationMaterial)
+    sprite.visible = false
+    sprite.scale.setScalar(this.livePulseMinSize)
+    return sprite
+  }
+
   setTarget(target: Vector3) {
     this.targetPosition = target
     this.focusSphere.position.copy(this.targetPosition)
+    this.requestRenderIfNotRequested()
+  }
+
+  setLiveLocation(target: Vector3 | null) {
+    if (!target) {
+      this.liveLocationSprite.visible = false
+      this.liveLocationMaterial.opacity = 0;
+      this.requestRenderIfNotRequested()
+      return
+    }
+
+    this.liveLocationSprite.visible = true
+    this.liveLocationSprite.position.copy(target)
+    this.liveLocationSprite.scale.setScalar(this.livePulseMinSize);
+    this.liveLocationMaterial.opacity = 1;
     this.requestRenderIfNotRequested()
   }
 
@@ -143,6 +179,15 @@ export class Galaxy {
   render() {
     this.renderRequested = false
 
+    if (this.liveLocationSprite.visible) {
+      const pulseT = (performance.now() % this.livePulseDurationMs) / this.livePulseDurationMs;
+      const scale = this.livePulseMinSize + (this.livePulseMaxSize - this.livePulseMinSize) * pulseT;
+      const alpha = Math.pow(1 - pulseT, 1.8);
+
+      this.liveLocationSprite.scale.setScalar(scale);
+      this.liveLocationMaterial.opacity = alpha;
+    }
+
     this.controls.update()
     this.stats.update()
     this.renderer.clear();
@@ -154,6 +199,10 @@ export class Galaxy {
       this.currentPosition.lerp(this.targetPosition, 0.08)
       this.controls.target.copy(this.currentPosition)
       this.requestRenderIfNotRequested()
+    }
+
+    if (this.liveLocationSprite.visible) {
+      this.requestRenderIfNotRequested();
     }
   }
 

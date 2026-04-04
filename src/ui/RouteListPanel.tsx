@@ -33,8 +33,7 @@ export function RouteListPanel() {
                   <th className="w-10 px-3 py-2"></th>
                   <th className="px-3 py-2">System</th>
                   <th className="w-26 px-3 py-2">Distance (LY)</th>
-                  <th className="w-20 px-3 py-2">Refuel?</th>
-                  <th className="w-24 px-3 py-2">Neutron?</th>
+                  <th className="w-20 px-3 py-2">Flags</th>
                 </tr>
               </thead>
               <tbody>
@@ -62,8 +61,20 @@ export function RouteListPanel() {
                           <label className="cursor-pointer" htmlFor={checkboxId}>{node.system.name}</label>
                         </td>
                         <td className="px-3 py-2 tabular-nums text-white/80">{node.distance.toFixed(2)}</td>
-                        <td className="px-3 py-2 text-white/80">{node.refuel ? "Yes" : "-"}</td>
-                        <td className="px-3 py-2 text-white/80">{node.isNeutron ? "Yes" : "-"}</td>
+                        <td className="px-3 py-2 text-white/80">
+                          <div className="flex items-center gap-2 font-semibold">
+                            {node.refuel ? (
+                              <span className="text-orange-400" title="Refuel at this star">R</span>
+                            ) : (
+                              <span className="text-white/35">-</span>
+                            )}
+                            {node.isNeutron ? (
+                              <span className="text-sky-300" title="Neutron star">N</span>
+                            ) : (
+                              <span className="text-white/35">-</span>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   }}
