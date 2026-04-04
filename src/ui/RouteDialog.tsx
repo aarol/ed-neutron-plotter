@@ -3,54 +3,49 @@ import { SearchBox, type SearchBoxHandle } from "./SearchBox";
 import { Button } from "./components/Button";
 import type { RouteConfig } from "./types";
 import { uiTheme } from "./theme";
-import { effect } from "@preact/signals";
-import { showRouteDialog } from "./UI";
 
 interface RouteDialogProps {
+  dialogOpen: boolean;
   initialToValue?: string;
+  initialFromValue?: string;
   onSubmit: (config: RouteConfig) => Promise<void> | void;
   onSuggest: (word: string) => string[];
+  onClose: () => void;
 }
 
 export function RouteDialog({
+  dialogOpen,
   initialToValue = "",
+  initialFromValue = "",
   onSubmit,
   onSuggest,
+  onClose,
 }: RouteDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fromRef = useRef<SearchBoxHandle>(null);
-  const [from, setFrom] = useState("");
+  const [from, setFrom] = useState(initialFromValue);
   const [to, setTo] = useState(initialToValue);
   const [alreadySupercharged, setAlreadySupercharged] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const closeDialog = () => {
-    showRouteDialog.value = false;
-  };
 
   useEffect(() => {
     setTo(initialToValue);
   }, [initialToValue]);
 
   useEffect(() => {
-    const dispose = effect(() => {
-      const dialog = dialogRef.current;
-      if (showRouteDialog.value) {
-        setFrom("");
-        setAlreadySupercharged(false);
-        setIsSubmitting(false);
-        if (!dialog?.open) {
-          dialog?.showModal();
-        }
-      } else {
-        dialog?.close();
-      }
-    });
+    setFrom(initialFromValue);
+  }, [initialFromValue]);
 
-    return () => {
-      dispose();
-    };
-  }, []);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialogOpen) {
+      setAlreadySupercharged(false);
+      if (!dialog?.open) {
+        dialog?.showModal();
+      }
+    } else {
+      dialog?.close();
+    }
+  }, [dialogOpen]);
 
   const canGenerate = from.trim().length > 0 && to.trim().length > 0;
 
@@ -65,24 +60,19 @@ export function RouteDialog({
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      await onSubmit(config);
-      closeDialog();
-    } finally {
-      setIsSubmitting(false);
-    }
+    onClose();
+    await onSubmit(config);
   };
 
   return (
     <dialog
       className={`${uiTheme.glassPanel} fixed left-1/2 top-1/2 z-999 m-0 w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 p-4`}
-      onClose={closeDialog}
+      onClose={onClose}
       ref={dialogRef}
     >
       <div className={`${uiTheme.panelHeader} mb-3`}>
         <h2 className={uiTheme.panelTitle}>Plot route</h2>
-        <Button onClick={closeDialog} variant="icon">
+        <Button onClick={onClose} variant="icon">
           ×
         </Button>
       </div>
@@ -128,12 +118,12 @@ export function RouteDialog({
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button onClick={closeDialog} variant="secondary">
+        <Button onClick={onClose} variant="secondary">
           Cancel
         </Button>
         <Button
           className={!canGenerate ? "border-white/25 bg-white/10 text-white/45 shadow-none hover:border-white/25 hover:bg-white/10" : undefined}
-          disabled={isSubmitting || !canGenerate}
+          disabled={!canGenerate}
           onClick={() => void handleGenerate()}
           variant="primary"
         >

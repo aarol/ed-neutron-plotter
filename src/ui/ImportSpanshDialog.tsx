@@ -1,39 +1,32 @@
-import { effect } from "@preact/signals";
 import { useContext, useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "./components/Button";
 import { uiTheme } from "./theme";
-import { showImportSpanshDialog } from "./UI";
 import { parseSpanshHtml } from "../spansh-import";
 import { useToast } from "./toast";
 import { RouteContext } from "./state/routeModel";
 
-export function ImportSpanshDialog() {
+type ImportSpanshDialogProps = {
+  dialogOpen: boolean;
+  onClose: () => void;
+}
+
+export function ImportSpanshDialog({ dialogOpen, onClose, }: ImportSpanshDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const toast = useToast();
   const [processing, setProcessing] = useState(false);
 
   const routeState = useContext(RouteContext)!;
 
-  const closeDialog = () => {
-    showImportSpanshDialog.value = false;
-  };
-
   useEffect(() => {
-    const dispose = effect(() => {
-      const dialog = dialogRef.current;
-      if (showImportSpanshDialog.value) {
-        if (!dialog?.open) {
-          dialog?.showModal();
-        }
-      } else {
-        dialog?.close();
+    const dialog = dialogRef.current;
+    if (dialogOpen) {
+      if (!dialog?.open) {
+        dialog?.showModal();
       }
-    });
-
-    return () => {
-      dispose();
-    };
-  }, []);
+    } else {
+      dialog?.close();
+    }
+  }, [dialogOpen]);
 
   async function onPaste(event: ClipboardEvent) {
     const htmlData = event.clipboardData?.getData("text/html")
@@ -61,12 +54,12 @@ export function ImportSpanshDialog() {
   return (
     <dialog
       className={`${uiTheme.glassPanel} fixed left-1/2 top-1/2 z-999 m-0 w-[min(92vw,700px)] -translate-x-1/2 -translate-y-1/2 p-5`}
-      onClose={closeDialog}
+      onClose={onClose}
       ref={dialogRef}
     >
       <div className={`${uiTheme.panelHeader} mb-4`}>
         <h2 className={uiTheme.panelTitle}>Import route from Spansh</h2>
-        <Button aria-label="Close import route dialog" onClick={closeDialog} variant="icon">
+        <Button aria-label="Close import route dialog" onClick={onClose} variant="icon">
           ×
         </Button>
       </div>

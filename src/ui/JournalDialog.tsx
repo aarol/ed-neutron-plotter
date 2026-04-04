@@ -3,13 +3,13 @@ import { Button } from "./components/Button";
 import { uiTheme } from "./theme";
 import { useToast } from "./toast";
 import { JournalContext } from "./state/journalModel";
-import { effect } from "@preact/signals";
-import { showJournalDialog } from "./UI";
 
 interface JournalDialogProps {
+  dialogOpen: boolean;
+  onClose: () => void;
 }
 
-export function JournalDialog({ }: JournalDialogProps) {
+export function JournalDialog({ dialogOpen, onClose }: JournalDialogProps) {
   const { showError } = useToast();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [isInitializing, setIsInitializing] = useState(false);
@@ -19,28 +19,24 @@ export function JournalDialog({ }: JournalDialogProps) {
 
   const journalState = useContext(JournalContext)!;
 
+
   useEffect(() => {
-    const dispose = effect(() => {
-      const dialog = dialogRef.current;
-      if (showJournalDialog.value) {
-        if (!dialog?.open) dialog?.showModal();
-      } else {
-        dialog?.close();
+    const dialog = dialogRef.current;
+    if (dialogOpen) {
+      if (!dialog?.open) {
+        dialog?.showModal();
       }
-    });
+    } else {
+      dialog?.close();
+    }
+  }, [dialogOpen]);
 
-    return () => {
-      dispose();
-    };
-  }, []);
-
-  const closeDialog = () => showJournalDialog.value = false;
 
   const handleInitialize = async () => {
     setIsInitializing(true);
     try {
       await journalState.init();
-      closeDialog();
+      onClose();
     } catch (error) {
       console.error("Error accessing journal directory:", error);
       showError(error instanceof Error ? error.message : "Failed to initialize journal tracking.");
@@ -53,7 +49,7 @@ export function JournalDialog({ }: JournalDialogProps) {
     <dialog
       className={`${uiTheme.glassPanel} fixed left-1/2 top-1/2 m-0 w-[min(92vw,680px)] -translate-x-1/2 -translate-y-1/2 p-0`}
       ref={dialogRef}
-      onClose={closeDialog}
+      onClose={onClose}
     >
       <div className={`${uiTheme.panelHeader} border-b border-white/10 px-4.5 pb-3 pt-4`}>
         <h3 className={uiTheme.panelTitle}>Track in-game location</h3>

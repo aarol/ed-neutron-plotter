@@ -9,7 +9,7 @@ import { useToast } from "./toast";
 import type { RouteConfig, StarSystem } from "./types";
 import { RouteContext } from "./state/routeModel";
 import { Show } from "@preact/signals/utils";
-import { signal } from "@preact/signals";
+import { signal, useSignal } from "@preact/signals";
 import { JournalContext } from "./state/journalModel";
 import { loadStoredFocusedSystem } from "./state/localStorage";
 import { HamburgerMenu } from "./HamburgerMenu";
@@ -21,10 +21,6 @@ export interface UIProps {
   autocomplete: (word: string) => string[];
 }
 
-export const showJournalDialog = signal(false);
-export const showRouteDialog = signal(false);
-export const showImportSpanshDialog = signal(false);
-
 export const focusedSystem = signal<StarSystem>(loadStoredFocusedSystem() ?? { name: "Sol", coords: { x: 0, y: 0, z: 0 } });
 
 export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
@@ -32,11 +28,13 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
   const journalState = useContext(JournalContext)!;
   const routeState = useContext(RouteContext)!;
   const [routeDialogToValue, setRouteDialogToValue] = useState("");
+  const [routeDialogFromValue, setRouteDialogFromValue] = useState("");
+  const openDialog = useSignal<"route" | "journal" | "importSpansh" | null>(null);
 
   const openRouteDialog = (word: string) => {
-    console.log("Opening route dialog with initial to value:", word);
-    setRouteDialogToValue(word);
-    showRouteDialog.value = true;
+    setRouteDialogFromValue(word);
+    setRouteDialogToValue("");
+    openDialog.value = "route";
   };
 
   const handleSearch = async (query: string, options: SearchSubmitOptions) => {
@@ -57,14 +55,14 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
   };
 
   const handleGenerateRoute = async (config: RouteConfig) => {
-    showRouteDialog.value = false;
+    openDialog.value = null;
     try {
       const nextRouteNodes = await onGenerateRoute(config);
       routeState.setRoute(nextRouteNodes.map(system => ({
         system,
         distance: 0, // Placeholder, you can calculate actual distances if needed
-        refuel: false, // Placeholder, you can determine refuel points if needed
-        isNeutron: false, // Placeholder, you can determine neutron points if needed
+        refuel: true, // Placeholder, you can determine refuel points if needed
+        isNeutron: true, // Placeholder, you can determine neutron points if needed
       })));
     } catch (error) {
       showError(error instanceof Error ? error.message : "Failed to generate route.");
@@ -80,7 +78,7 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
             journalState.stop();
             return;
           }
-          showJournalDialog.value = true;
+          openDialog.value = "journal";
         }}
         onSearch={(query, options) => {
           void handleSearch(query, options);
@@ -89,24 +87,33 @@ export function UI({ onGenerateRoute, onSelectTarget, autocomplete }: UIProps) {
       />
 
       <HamburgerMenu onImportRouteFromSpansh={() => {
-        showImportSpanshDialog.value = true;
+        openDialog.value = "importSpansh";
       }} />
 
-      <TargetInfo isRoutePanelOpen={showRouteDialog.value} onOpenRoute={openRouteDialog} />
+      <TargetInfo isRoutePanelOpen={openDialog.value === "route"} onOpenRoute={openRouteDialog} />
 
-      <Show when={() =>routeState.nodes.value.length > 0}>
+      <Show when={() => routeState.nodes.value.length > 0}>
         <RouteListPanel />
       </Show>
 
       <RouteDialog
+        dialogOpen={openDialog.value === "route"}
+        initialFromValue={routeDialogFromValue}
         initialToValue={routeDialogToValue}
         onSubmit={handleGenerateRoute}
         onSuggest={autocomplete}
+        onClose={() => openDialog.value = null}
       />
 
-      <ImportSpanshDialog />
+      <ImportSpanshDialog
+        dialogOpen={openDialog.value === "importSpansh"}
+        onClose={() => openDialog.value = null}
+      />
 
-      <JournalDialog />
+      <JournalDialog
+        dialogOpen={openDialog.value === "journal"}
+        onClose={() => openDialog.value = null}
+      />
     </>
   );
 };
