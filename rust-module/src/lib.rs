@@ -5,6 +5,7 @@ pub mod plotter;
 pub mod system;
 pub mod trie;
 pub mod utils;
+pub mod galaxy_parser;
 use wasm_bindgen::prelude::*;
 
 use crate::{system::Coords, trie::LoudsTrie};
