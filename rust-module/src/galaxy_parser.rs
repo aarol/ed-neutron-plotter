@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     fs::File,
     io::{self, BufRead, Read, Write},
-    path::Path,
 };
 
 use byteorder::{ReadBytesExt, WriteBytesExt};

@@ -1,26 +1,16 @@
 import { Vector3 } from "three";
-import * as wasm from "../rust-module/pkg";
-import type { StarSystem } from "./ui/types";
+import type { StarSystem } from "../ui/types";
+import type { ApiCoords } from ".";
+
+// Elite Dangerous Database (EDDB) Api client
 
 export type SystemInfoResponse = {
   name: string
   coords: ApiCoords
 } | []
 
-export interface ApiCoords {
-  x: number
-  y: number
-  z: number
-}
-
 export function vec3fromCoords(coords: ApiCoords): Vector3 {
   return new Vector3(coords.x, coords.y, coords.z);
-}
-
-async function getStarCoords(wasmModule: wasm.Module, star: string): Promise<ApiCoords | null> {
-  // First try to get coordinates from the wasm module's searcher
-  // If not found, fall back to the API
-  return wasmModule.get_coords_for_star(star) ?? await getStarCoordsFromApi(star);
 }
 
 async function getStarCoordsFromApi(star: string): Promise<ApiCoords | null> {
@@ -79,7 +69,7 @@ function encodeSystemNamesForApi(stars: string[]): string {
   return stars.map(star => `systemName[]=${encodeURIComponent(star)}`).join("&");
 }
 
-export const api = {
-  getStarCoords,
+export default {
+  getStarCoordsFromApi,
   getMultipleStarCoordsFromApi,
 }

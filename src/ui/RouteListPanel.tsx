@@ -4,10 +4,20 @@ import { uiTheme } from "./theme";
 import { useContext } from "preact/hooks";
 import { RouteContext } from "./state/routeModel";
 import { For } from "@preact/signals/utils";
+import { useToast } from "./toast";
 
 
 export function RouteListPanel() {
   const { nodes, progress, setProgress, clearRoute } = useContext(RouteContext)!;
+  const { showError } = useToast();
+
+  async function copySystemName(systemName: string) {
+    try {
+      await navigator.clipboard.writeText(systemName);
+    } catch {
+      showError("Could not copy system name to clipboard.");
+    }
+  }
 
   return (
     <DraggablePanel
@@ -57,8 +67,17 @@ export function RouteListPanel() {
                             type="checkbox"
                           />
                         </td>
-                        <td className="font-medium text-white/90">
-                          <label className="cursor-pointer" htmlFor={checkboxId}>{node.system.name}</label>
+                        <td className="px-3 py-2 font-medium text-white/90">
+                          <button
+                            className="cursor-pointer bg-transparent p-0 text-left text-inherit underline decoration-white/35 underline-offset-2 transition hover:text-white"
+                            onClick={() => {
+                              void copySystemName(node.system.name);
+                            }}
+                            title="Copy system name"
+                            type="button"
+                          >
+                            {node.system.name}
+                          </button>
                         </td>
                         <td className="px-3 py-2 tabular-nums text-white/80">{node.distance.toFixed(2)}</td>
                         <td className="px-3 py-2 text-white/80">

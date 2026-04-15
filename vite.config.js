@@ -10,6 +10,18 @@ export default {
     headers: {
       "Cross-Origin-Embedder-Policy": "require-corp",
       "Cross-Origin-Opener-Policy": "same-origin"
+    },
+    proxy: {
+      '/spansh-api': {
+        target: 'https://spansh.co.uk/api',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/spansh-api/, '')
+      }
+    },
+    watch: {
+      ignored: [
+        "rust-module/**/*",
+      ]
     }
   },
   base: "/ed-neutron-plotter/"

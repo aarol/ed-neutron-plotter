@@ -28,28 +28,32 @@ export function ImportSpanshDialog({ dialogOpen, onClose, }: ImportSpanshDialogP
     }
   }, [dialogOpen]);
 
-  async function onPaste(event: ClipboardEvent) {
-    const htmlData = event.clipboardData?.getData("text/html")
-    if (htmlData) {
+  useEffect(() => {
+    if (!dialogOpen) {
+      return;
+    }
+
+    const onPaste = async (event: ClipboardEvent) => {
+      const htmlData = event.clipboardData?.getData("text/html");
+      if (!htmlData) {
+        return;
+      }
+
       setProcessing(true);
       try {
-
         const res = await parseSpanshHtml(htmlData);
-        routeState.setRoute(res)
-
+        routeState.setRoute(res);
       } catch (error) {
         console.error("Failed to parse Spansh HTML:", error);
-        toast.showError((error as Error).message)
+        toast.showError((error as Error).message);
       } finally {
         setProcessing(false);
       }
-    }
-  }
+    };
 
-  useEffect(() => {
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  })
+  }, [dialogOpen, routeState, toast]);
 
   return (
     <dialog

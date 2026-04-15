@@ -2,7 +2,6 @@ import "./style.css";
 import { Galaxy } from "./galaxy";
 import init, { Module } from "../rust-module/pkg/rust_module";
 import { Vector3 } from "three/webgpu";
-import { api } from "./api";
 import * as Comlink from "comlink";
 import { WasmWorker as WasmWorkerAPI } from "./web-worker";
 import Worker from "./web-worker?worker";
@@ -14,6 +13,7 @@ import { RouteContext, RouteModel, type RouteState } from "./ui/state/routeModel
 import { effect } from "@preact/signals";
 import { JournalContext, JournalModel, type JournalState } from "./ui/state/journalModel";
 import { saveStoredFocusedSystem } from "./ui/state/localStorage";
+import { api } from "./api";
 
 async function main() {
   await init();
@@ -82,8 +82,10 @@ async function main() {
     focusedSystem.value = system;
   }
 
+  // This is a Preact Signal that will run when focusedSystem changes
+  // There are a lot of these effect blocks because they bridge state
+  // between the Preact and the imperative galaxy methods really well
   effect(() => {
-    // This will run any time focusedSystem changes
     const system = focusedSystem.value;
     if (system) {
       const { x, y, z } = system.coords;
@@ -102,6 +104,8 @@ async function main() {
       console.log(`New location from journal: ${lastSystem.name} at (${lastSystem.coords.x}, ${lastSystem.coords.y}, ${lastSystem.coords.z})`);
       galaxy.setLiveLocation(new Vector3(lastSystem.coords.x, lastSystem.coords.y, lastSystem.coords.z));
       focusedSystem.value = lastSystem;
+
+      routeModel.markVisitedSystem(lastSystem.name);
       return;
     }
 

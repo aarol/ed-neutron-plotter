@@ -61,7 +61,7 @@ export class Galaxy {
 
     // this is for you javascript (middle finger)
     const localThis = this
-    this.controls.addEventListener('change', this.requestRenderIfNotRequested.bind(localThis))
+    this.controls.addEventListener('change', this.requestRender.bind(localThis))
 
     window.addEventListener('resize', this.onWindowResize.bind(localThis));
 
@@ -115,14 +115,14 @@ export class Galaxy {
   setTarget(target: Vector3) {
     this.targetPosition = target
     this.focusSphere.position.copy(this.targetPosition)
-    this.requestRenderIfNotRequested()
+    this.requestRender()
   }
 
   setLiveLocation(target: Vector3 | null) {
     if (!target) {
       this.liveLocationSprite.visible = false
       this.liveLocationMaterial.opacity = 0;
-      this.requestRenderIfNotRequested()
+      this.requestRender()
       return
     }
 
@@ -130,12 +130,12 @@ export class Galaxy {
     this.liveLocationSprite.position.copy(target)
     this.liveLocationSprite.scale.setScalar(this.livePulseMinSize);
     this.liveLocationMaterial.opacity = 1;
-    this.requestRenderIfNotRequested()
+    this.requestRender()
   }
 
   setRoutePoints(points: Float32Array) {
     this.routeLine.update(points);
-    this.requestRenderIfNotRequested()
+    this.requestRender()
   }
   
   setRoutePointsFromCoords(coords: StarSystem["coords"][]) {
@@ -147,12 +147,12 @@ export class Galaxy {
       points[i * 3 + 2] = coord.z;
     });
     this.routeLine.update(points);
-    this.requestRenderIfNotRequested()
+    this.requestRender()
   }
 
   setRouteProgress(index: number) {
     this.routeLine.setProgress(index);
-    this.requestRenderIfNotRequested();
+    this.requestRender();
   }
 
   private initializeMouseEvents() {
@@ -164,7 +164,7 @@ export class Galaxy {
   clearRoute() {
     this.routeLine.update(new Float32Array([]));
     this.routeLine.setProgress(0);
-    this.requestRenderIfNotRequested();
+    this.requestRender();
   }
 
   onWindowResize() {
@@ -172,7 +172,7 @@ export class Galaxy {
     this.camera.updateProjectionMatrix();
 
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.requestRenderIfNotRequested()
+    this.requestRender()
   }
 
   renderRequested = false
@@ -198,15 +198,15 @@ export class Galaxy {
     if (this.currentPosition.distanceToSquared(this.targetPosition) > 0.0001) {
       this.currentPosition.lerp(this.targetPosition, 0.08)
       this.controls.target.copy(this.currentPosition)
-      this.requestRenderIfNotRequested()
+      this.requestRender()
     }
 
     if (this.liveLocationSprite.visible) {
-      this.requestRenderIfNotRequested();
+      this.requestRender();
     }
   }
 
-  requestRenderIfNotRequested() {
+  requestRender() {
     if (!this.renderRequested) {
       this.renderRequested = true
 
@@ -251,7 +251,7 @@ export class Galaxy {
       const mesh = new Points(geometry, material);
       mesh.frustumCulled = false
       this.scene.add(mesh);
-      this.requestRenderIfNotRequested()
+      this.requestRender()
     }
   }
 

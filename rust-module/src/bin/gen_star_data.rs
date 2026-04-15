@@ -1,6 +1,7 @@
+#[cfg(target_family = "unix")]
 use mimalloc::MiMalloc;
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(target_family = "unix")]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
